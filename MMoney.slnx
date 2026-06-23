@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="MMoney.App/MMoney.App.csproj">
+    <Deploy Solution="Debug|*" />
+  </Project>
+  <Project Path="MMoney.Core/MMoney.Core.csproj" />
+  <Project Path="MMoney.Core.Tests/MMoney.Core.Tests.csproj" />
+</Solution>

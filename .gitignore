@@ -1,0 +1,69 @@
+# Build output
+[Bb]in/
+[Oo]bj/
+[Oo]ut/
+[Ll]og/
+[Ll]ogs/
+
+# Visual Studio / Rider / VS Code
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.userprefs
+
+# MSBuild / Rider generated
+*.binlog
+*.csproj.user
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# .NET
+*.dll
+*.exe
+*.pdb
+*.cache
+*.nupkg
+*.snupkg
+.packages/
+**/[Pp]ackages/*
+!**/[Pp]ackages/build/
+
+# Test results / coverage
+[Tt]est[Rr]esult*/
+[Bb]uild[Ll]og.*
+*.trx
+*.coverage
+*.coveragexml
+coverage*.json
+coverage*.xml
+coverage*.info
+TestResults/
+
+# MAUI / mobile
+*.keystore
+*.jks
+*.aab
+*.apk
+*.ipa
+Platforms/Android/**/bin/
+Platforms/Android/**/obj/
+
+# OS noise
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# User-specific & local config
+*.local.json
+appsettings.*.local.json
+secrets.json
+
+# Temp
+*.tmp
+*.temp
+*~
