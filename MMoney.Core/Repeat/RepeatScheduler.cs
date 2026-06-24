@@ -66,7 +66,7 @@ public sealed class RepeatScheduler
         RepeatStrategy.Daily daily => DailyDates(daily, origin, start),
         RepeatStrategy.Weekly weekly => WeeklyDates(weekly, origin, start),
         RepeatStrategy.Monthly monthly => MonthlyDates(monthly, origin, start),
-        RepeatStrategy.Yearly => YearlyDates(origin, start),
+        RepeatStrategy.Yearly yearly => YearlyDates(yearly, origin, start),
         _ => throw new InvalidOperationException()
     };
 
@@ -133,22 +133,26 @@ public sealed class RepeatScheduler
         }
     }
 
-    private static IEnumerable<DateOnly> YearlyDates(DateOnly origin, DateOnly start)
+    private static IEnumerable<DateOnly> YearlyDates(RepeatStrategy.Yearly configuration, DateOnly origin, DateOnly start)
     {
         ThrowIfOriginAfterStart(origin, start);
 
+        // Legacy logs serialized Yearly without an interval; treat a missing/invalid value as every year.
+        var interval = configuration.Interval > 0 ? configuration.Interval : 1;
+
         // Always measure from the origin, never cumulatively from the previous occurrence: AddYears clamps
         // 29 Feb to 28 Feb in non-leap years but restores the 29th in leap years when computed from the origin.
-        var year = Math.Max(0, start.Year - origin.Year - 1);
+        var yearsFromOrigin = Math.Max(0, start.Year - origin.Year - 1);
+        var offset = yearsFromOrigin / interval * interval;
         while (true)
         {
-            var date = origin.AddYears(year);
+            var date = origin.AddYears(offset);
             if (date >= start)
             {
                 yield return date;
             }
 
-            year++;
+            offset += interval;
         }
     }
 

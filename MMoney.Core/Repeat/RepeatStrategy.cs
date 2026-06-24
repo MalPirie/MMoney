@@ -34,6 +34,10 @@ public abstract record RepeatStrategy
     /// <param name="DayInMonth">Whether the occurrence lands on a day-of-month or an nth/last weekday.</param>
     public sealed record Monthly(int Interval, DayInMonth DayInMonth) : RepeatStrategy;
 
-    /// <summary>Every year on the origin's month and day.</summary>
-    public sealed record Yearly() : RepeatStrategy;
+    /// <summary>Every <paramref name="Interval"/> years on the origin's month and day.</summary>
+    /// <param name="Interval">
+    /// Years between occurrences (1 = every year). Legacy logs serialized <c>Yearly</c> without this field;
+    /// it defaults to 1 there and is treated as 1 if ever missing or non-positive.
+    /// </param>
+    public sealed record Yearly(int Interval = 1) : RepeatStrategy;
 }

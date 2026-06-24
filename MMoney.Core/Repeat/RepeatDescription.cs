@@ -22,7 +22,8 @@ public static class RepeatDescription
         RepeatStrategy.Monthly { Interval: 1, DayInMonth: var dim } => $"every month on the {FormatDayInMonth(dim)} {origin.DayOfWeek}",
         RepeatStrategy.Monthly { DayInMonth: DayInMonth.DayOfMonth } monthly => $"every {monthly.Interval} months on the {FormatOrdinalDay(origin.Day)}",
         RepeatStrategy.Monthly monthly => $"every {monthly.Interval} months on the {FormatDayInMonth(monthly.DayInMonth)} {origin.DayOfWeek}",
-        RepeatStrategy.Yearly => $"every year on {origin:d MMMM}",
+        RepeatStrategy.Yearly { Interval: 1 } => $"every year on {origin:d MMMM}",
+        RepeatStrategy.Yearly yearly => $"every {yearly.Interval} years on {origin:d MMMM}",
         _ => throw new InvalidOperationException()
     };
 
