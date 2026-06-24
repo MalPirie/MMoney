@@ -56,6 +56,13 @@ public sealed class Account
     /// </summary>
     public IReadOnlyList<Sequence> GetSequences() => [.. transactions.GetSequences()];
 
+    /// <summary>
+    /// The account's active sequences paired with their next due date on or after <paramref name="asOf"/>,
+    /// excluding any with no upcoming occurrence, ordered by next due date. Backs the repeating-items list.
+    /// </summary>
+    public IReadOnlyList<UpcomingSequence> GetUpcomingSequences(DateOnly asOf) =>
+        [.. transactions.GetUpcomingSequences(asOf)];
+
     /// <summary>The given month's transactions as display rows with running balances.</summary>
     public IReadOnlyList<LedgerEntry> GetMonth(MonthOnly month) => transactions.GetMonth(month);
 

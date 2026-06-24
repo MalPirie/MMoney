@@ -54,6 +54,17 @@ internal sealed class TransactionCollection(bool ignoreMonthClosed)
         .Where(s => scheduler.EndDate(s.Strategy, s.EndCondition, s.Origin) >= EarliestAllowedDate)
         .OrderBy(s => s.Id);
 
+    /// <summary>
+    /// The active sequences paired with their next due date on or after <paramref name="asOf"/>, excluding any
+    /// with no upcoming occurrence, ordered by next due date (then by origin for stability).
+    /// </summary>
+    public IEnumerable<UpcomingSequence> GetUpcomingSequences(DateOnly asOf) => GetSequences()
+        .Select(s => (Sequence: s, Next: scheduler.NextOnOrAfter(s.Strategy, s.EndCondition, s.Origin, asOf)))
+        .Where(x => x.Next is not null)
+        .Select(x => new UpcomingSequence(x.Sequence, x.Next!.Value))
+        .OrderBy(u => u.NextDue)
+        .ThenBy(u => u.Sequence.Id);
+
     // ---- Facts -----------------------------------------------------------------------------------
 
     /// <summary>Adds a one-off (non-repeating) transaction as a stored fact.</summary>
