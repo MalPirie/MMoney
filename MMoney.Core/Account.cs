@@ -181,6 +181,30 @@ public sealed class Account
         Update(new AccountEvent.TransactionAdded(newOrigin, sequence + 1, amount, description, newStrategy, newEndCondition));
     }
 
+    /// <summary>
+    /// Re-anchors a repeating sequence's dates atomically: truncates it at <paramref name="fromDate"/> and
+    /// restarts the same schedule (amount, description, strategy, end condition) at <paramref name="newDate"/>.
+    /// </summary>
+    /// <remarks>
+    /// Both dates are validated against the edit lock before anything changes, so the operation never half-applies.
+    /// When <paramref name="fromDate"/> is the origin the whole sequence is replaced; when later it is truncated
+    /// to end the day before <paramref name="fromDate"/>. The locked past is never touched — and a remnant
+    /// truncated to end before the edit lock is dropped from <see cref="GetSequences"/> as completed. Always mints
+    /// a new sequence (a date change cannot be applied in place). The caller maps scope to <paramref name="fromDate"/>:
+    /// the origin (or the edit lock, if the origin is locked) for the whole series, or the occurrence for this-and-following.
+    /// </remarks>
+    public void ChangeSequenceDate(Transaction transaction, DateOnly fromDate, DateOnly newDate)
+    {
+        ArgumentNullException.ThrowIfNull(transaction);
+        ThrowIfDateTooEarly(fromDate, nameof(fromDate));
+        ThrowIfDateTooEarly(newDate, nameof(newDate));
+        var sequenceRule = GetSequenceOrThrow(transaction);
+
+        Update(new AccountEvent.SequenceRemoved(sequenceRule.Origin, sequenceRule.Number, fromDate));
+        Update(new AccountEvent.TransactionAdded(newDate, sequence + 1, sequenceRule.Amount, sequenceRule.Description,
+            sequenceRule.Strategy, sequenceRule.EndCondition));
+    }
+
     /// <summary>Changes the amount of an existing transaction.</summary>
     public void ChangeTransactionAmount(Transaction transaction, decimal newAmount)
     {
