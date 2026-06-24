@@ -4,4 +4,5 @@
   </Project>
   <Project Path="MMoney.Core/MMoney.Core.csproj" />
   <Project Path="MMoney.Core.Tests/MMoney.Core.Tests.csproj" />
+  <Project Path="Mobiorum.Material3/Mobiorum.Material3.csproj" />
 </Solution>

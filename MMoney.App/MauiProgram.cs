@@ -3,7 +3,6 @@ using MauiReactor.HotReload;
 using Microsoft.Extensions.Logging;
 using Microsoft.Maui.Hosting;
 using MMoney.App.Components;
-using MMoney.App.Resources.Styles;
 
 namespace MMoney.App
 {
@@ -13,9 +12,9 @@ namespace MMoney.App
         {
             var builder = MauiApp.CreateBuilder();
             builder
-                .UseMauiReactorApp<HomePage>(app =>
+                .UseMauiReactorApp<ShellPage>(app =>
                     {
-                        app.UseTheme<ApplicationTheme>();
+                        app.UseTheme<MMoneyTheme>();
                     },
                     unhandledExceptionAction: e =>
                     {
@@ -25,6 +24,7 @@ namespace MMoney.App
                 {
                     fonts.AddFont("OpenSans-Regular.ttf", "OpenSansRegular");
                     fonts.AddFont("OpenSans-Semibold.ttf", "OpenSansSemibold");
+                    fonts.AddFont("MaterialSymbolsOutlined.ttf", "MaterialSymbols");
                 });
 
 
