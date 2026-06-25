@@ -132,6 +132,42 @@ The decisions below set the pattern for any later pager-like control, so they ar
   the `MonthOnly` demonstrator never exercises). Gestures, animation, and rendering are
   on-device manual — they cannot be meaningfully unit-tested.
 
+## OPEN: live-peek performance (in progress, 2026-06-25)
+
+The current committed control (`7f7f14b`) has **live peek but stutters/stalls on a real finger** with
+heavy pages: every `SetState` re-renders the whole tree (no partial render/memo in MauiReactor), and
+finger-tracking at ~60 Hz can't rebuild the page rows that fast → the UI thread saturates and the body
+freezes mid-drag (the gesture data advances smoothly in logs while the screen is frozen — confirmed on
+device). Throttling/coalescing and rendering only the dragged-toward neighbour reduced it but did not
+remove the ceiling.
+
+**Attempted fix — direct native manipulation** (MauiReactor's `Action`-ref native-control access, per
+<https://adospace.gitbook.io/mauireactor/components/accessing-native-controls>): render the pages *once*
+and mutate the body container's `TranslationX` directly per pan event (no `SetState`, no rebuild). The
+ref mechanism works and the body moved smoothly — but laying out three full-width pages so they *both*
+draw *and* hit-test the gesture hit a MAUI wall, two ways:
+- **Pages positioned by transform** (off-screen `TranslationX(±width)`): pan fires and translation is
+  smooth, but MAUI **never draws the off-screen neighbour's content** → peeked page is blank.
+- **Pages laid out in-flow** (an `HStack` so all three draw): they render, but the **pan recogniser
+  stops firing** (the stack overflows its parent; hit-testing through the overflow breaks).
+
+So draw vs hit-test fight each other for a translated multi-page row. This was reverted; the tree is back
+at `7f7f14b`.
+
+**Paths to evaluate next (decision pending):**
+- **A — native horizontal `ScrollView` body** (lean on the platform for layout/draw/scroll/nested-vertical
+  /hit-test; drive the underscore from its `Scrolled` event). Smooth and scalable, but **commit becomes
+  snap-based** — MAUI `ScrollView` has no paging or scroll-ended/velocity events, so the precise 0.5
+  point-of-no-return and flick-to-commit would degrade to "snap to nearest page after settle." **Spike
+  this first** to confirm smooth nested scroll *and* acceptable snap/commit before committing.
+- **B — custom pan + real layout positions** (`AbsoluteLayout` at `x = -w, 0, +w`, translate the
+  container): might satisfy both draw and hit-test since positions are real layout, not transforms — but
+  out-of-bounds draw/hit-test is platform-flaky; could burn cycles.
+- **C — accept the current stuttery version.**
+
+Open question for A: is **snap-based commit** (lose precise threshold/flick, gain native momentum) an
+acceptable trade? That decides whether A is worth pursuing.
+
 ## Considered and rejected
 
 - **`CarouselView` / paging `ScrollView`** — less code, but no fractional-scroll signal for the
