@@ -70,14 +70,14 @@ public sealed partial class StripPager<TItem> : Component<StripPagerState<TItem>
     [Prop] Action<TItem> _onSelectedChanged = _ => { };
 
     private const double SelectionDurationMs = 220;
-    private const double InstantMs = 1; // effectively no tween — used while a drag drives the value per-frame
+    private const int AnimSetupFrameMs = 16; // one frame to establish WithAnimation before tweening a value
     private const double AxisSlopDip = 10;
     private const double StripHeightDip = 48;
     private const double StripCellWidthDip = 84;
     private const double UnderscoreWidthDip = 32;
     private const double UnderscoreHeightDip = 3;
     private const double FlickVelocityDipPerSec = 450;
-    private const int StripRadius = 14; // cells materialised each side — generous so the strip can be browsed
+    private const int StripRadius = 8; // cells materialised each side — enough to browse, cheap to re-render
 
     // Per-gesture bookkeeping kept off State (no re-render on change).
     private int _axisLock;             // 0 = undecided, 1 = horizontal (page), 2 = vertical (inner scroller)
@@ -118,10 +118,7 @@ public sealed partial class StripPager<TItem> : Component<StripPagerState<TItem>
             pages.Add(PageHost(n, 1, width, offset));
         }
 
-        // WithAnimation must be present on every render to tween from the prior value (MauiReactor sets the
-        // animatable up across renders); the *duration* is what toggles tween-vs-instant. ~Instant while a
-        // drag drives the value per-frame; full on a jump crossfade.
-        return Grid(pages.ToArray())
+        var body = Grid(pages.ToArray())
             .IsClippedToBounds(true)
             .Opacity(State.BodyOpacity)
             .OnSizeChanged((Size size) =>
@@ -130,8 +127,12 @@ public sealed partial class StripPager<TItem> : Component<StripPagerState<TItem>
                 {
                     SetState(s => s.PageWidth = size.Width);
                 }
-            })
-            .WithAnimation(duration: State.Crossfading ? SelectionDurationMs : InstantMs);
+            });
+
+        // Animate only during a jump crossfade. A drag drives values per-frame and must NOT animate, or every
+        // frame sets up animations and the render stutters; WithAnimation is enabled one frame before a settle
+        // (see Settle/Jump) so it tweens rather than snaps.
+        return State.Crossfading ? body.WithAnimation(duration: SelectionDurationMs) : body;
     }
 
     private VisualNode PageHost(TItem item, int slot, double width, double offset)
@@ -145,10 +146,9 @@ public sealed partial class StripPager<TItem> : Component<StripPagerState<TItem>
             .Orientation(State.HorizontalLock ? ScrollOrientation.Neither : ScrollOrientation.Vertical)
             .WidthRequest(width)
             .HStart()
-            .TranslationX(slot * width + offset)
-            .WithAnimation(duration: State.BodyAnimating ? SelectionDurationMs : InstantMs);
+            .TranslationX(slot * width + offset);
 
-        return host;
+        return State.BodyAnimating ? host.WithAnimation(duration: SelectionDurationMs) : host;
     }
 
     // ---- Strip + underscore ------------------------------------------------------------------------------
@@ -187,10 +187,9 @@ public sealed partial class StripPager<TItem> : Component<StripPagerState<TItem>
         .HStart()
         .TranslationX(centre - (StripCellWidthDip / 2) + cell.Offset * StripCellWidthDip + State.StripScroll)
         .OnTapped(() => OnCellTapped(cell.Offset))
-        .OnPanUpdated(OnStripPan)
-        .WithAnimation(duration: State.StripAnimating ? SelectionDurationMs : InstantMs);
+        .OnPanUpdated(OnStripPan);
 
-        return node;
+        return State.StripAnimating ? node.WithAnimation(duration: SelectionDurationMs) : node;
     }
 
     private VisualNode Underscore(MaterialScheme scheme, double centre)
@@ -206,10 +205,9 @@ public sealed partial class StripPager<TItem> : Component<StripPagerState<TItem>
             .HeightRequest(UnderscoreHeightDip)
             .HStart()
             .VEnd()
-            .TranslationX(centre - (UnderscoreWidthDip / 2) + State.StripScroll + drift)
-            .WithAnimation(duration: State.StripAnimating ? SelectionDurationMs : InstantMs);
+            .TranslationX(centre - (UnderscoreWidthDip / 2) + State.StripScroll + drift);
 
-        return bar;
+        return State.StripAnimating ? bar.WithAnimation(duration: SelectionDurationMs) : bar;
     }
 
     /// <summary>The offset rendered in the selected state: the drag candidate while dragging, else the committed cell.</summary>
@@ -384,14 +382,23 @@ public sealed partial class StripPager<TItem> : Component<StripPagerState<TItem>
             _ => null,
         };
 
+        // Enable WithAnimation for one frame at the *current* values so the upcoming change tweens (MauiReactor
+        // only animates a property whose node carried WithAnimation on the previous render — otherwise it snaps).
+        SetState(s => { s.BodyAnimating = true; s.StripAnimating = true; });
+        await Task.Delay(AnimSetupFrameMs);
+        if (_generation != generation)
+        {
+            return;
+        }
+
         if (committed is not { } item)
         {
             // Nothing to commit (rubber-band, or a finite edge): ease the body back to rest.
-            SetState(s => { s.BodyAnimating = true; s.Fraction = 0; });
+            SetState(s => s.Fraction = 0);
             await Task.Delay((int)SelectionDurationMs);
             if (_generation == generation)
             {
-                SetState(s => s.BodyAnimating = false);
+                SetState(s => { s.BodyAnimating = false; s.StripAnimating = false; });
             }
 
             return;
@@ -401,14 +408,10 @@ public sealed partial class StripPager<TItem> : Component<StripPagerState<TItem>
         // centre and the underscore tracks — all in a single timeframe. (Reuses the swipe-commit slide, so a
         // tap on an adjacent cell and a completed swipe animate identically.)
         var toNext = decision == PagerCommit.CommitNext;
-        var bodyTarget = toNext ? -1.0 : 1.0;
-        var stripTarget = (toNext ? -1.0 : 1.0) * StripCellWidthDip;
         SetState(s =>
         {
-            s.BodyAnimating = true;
-            s.StripAnimating = true;
-            s.Fraction = bodyTarget;
-            s.StripScroll = stripTarget;
+            s.Fraction = toNext ? -1.0 : 1.0;
+            s.StripScroll = (toNext ? -1.0 : 1.0) * StripCellWidthDip;
         });
         await Task.Delay((int)SelectionDurationMs);
         if (_generation != generation)
@@ -432,28 +435,32 @@ public sealed partial class StripPager<TItem> : Component<StripPagerState<TItem>
     {
         var generation = ++_generation;
 
-        // The jump applies to the body (crossfade — no slide through the gap); the strip always scrolls to centre.
-        SetState(s => { s.Crossfading = true; s.BodyOpacity = 0; });
-        await Task.Delay((int)(SelectionDurationMs / 2));
+        // Enable the crossfade + strip animation for one frame at the current values so they tween, not snap.
+        SetState(s => { s.Crossfading = true; s.StripAnimating = true; });
+        await Task.Delay(AnimSetupFrameMs);
         if (_generation != generation)
         {
             return;
         }
 
-        SetState(s => { s.Fraction = 0; s.StripScroll += offset * StripCellWidthDip; });
+        // The jump applies to the body (crossfade — no slide through the gap); the strip scrolls the target to
+        // centre over the same timeframe.
+        SetState(s => { s.BodyOpacity = 0; s.StripScroll = -offset * StripCellWidthDip; });
+        await Task.Delay((int)SelectionDurationMs);
+        if (_generation != generation)
+        {
+            return;
+        }
+
+        // Seamless swap: target is centred in the strip; reset to rest with it selected (instant — no jump),
+        // then fade the new body back in.
+        SetState(s => { s.StripAnimating = false; s.StripScroll = 0; s.Fraction = 0; });
         _onSelectedChanged(target);
-
-        await Task.Delay(1);
-        if (_generation != generation)
-        {
-            return;
-        }
-
-        SetState(s => { s.BodyOpacity = 1; s.StripAnimating = true; s.StripScroll = 0; });
+        SetState(s => s.BodyOpacity = 1);
         await Task.Delay((int)SelectionDurationMs);
         if (_generation == generation)
         {
-            SetState(s => { s.Crossfading = false; s.StripAnimating = false; });
+            SetState(s => s.Crossfading = false);
         }
     }
 
@@ -466,7 +473,14 @@ public sealed partial class StripPager<TItem> : Component<StripPagerState<TItem>
         }
 
         var generation = ++_generation;
-        SetState(s => { s.StripAnimating = true; s.StripScroll = 0; });
+        SetState(s => s.StripAnimating = true);
+        await Task.Delay(AnimSetupFrameMs);
+        if (_generation != generation)
+        {
+            return;
+        }
+
+        SetState(s => s.StripScroll = 0);
         await Task.Delay((int)SelectionDurationMs);
         if (_generation == generation)
         {

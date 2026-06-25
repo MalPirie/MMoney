@@ -107,12 +107,14 @@ The decisions below set the pattern for any later pager-like control, so they ar
   neighbour is already centred in both, so nothing visibly moves at the swap. An earlier two-phase
   version (slide the body, *then* re-centre the strip) read as separate steps; this supersedes it.
 
-- **`WithAnimation` must be present on every render, with the *duration* toggled.** MauiReactor
-  only tweens a property if `WithAnimation` is set on the node across renders; applying it
-  *conditionally* (only during a settle) makes the value **snap** instead. So every animated node
-  carries `WithAnimation` always, with the duration set to ~instant (`InstantMs`) while a drag
-  drives the value per-frame and to `SelectionDuration` during a settle. This was found on device —
-  with the conditional form, every transition silently snapped.
+- **`WithAnimation` is enabled one frame *before* a settle, never during a drag.** MauiReactor only
+  tweens a property if its node carried `WithAnimation` on the previous render — so applying it in the
+  *same* `SetState` that changes the value makes it **snap**. But leaving it on *every* render (so it is
+  always present) sets up an animation per node per frame, which **stutters the drag** (found on device:
+  the gesture data advanced smoothly in logs while the screen froze). The resolution: `WithAnimation` is
+  **off during a drag** (values are driven per-frame, no animation), and a settle **enables it for one
+  frame at the current value** (`AnimSetupFrameMs`) and *then* changes the value on the next frame — so it
+  is present across the change and tweens, without any per-frame animation cost while dragging.
 
 - **Pure logic sits in a MauiReactor-free seam.** Window materialisation + offset tagging, the
   commit decision (`fraction`/velocity/`null`-neighbour → commit-next / commit-prev /
