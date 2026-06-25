@@ -1,7 +1,9 @@
 using System;
+using System.Linq;
 using Microsoft.Maui.ApplicationModel;
 using Microsoft.Maui.Storage;
 using Mobiorum.Material3;
+using MMoney.Core;
 
 namespace MMoney.App.Components;
 
@@ -9,6 +11,9 @@ internal sealed class ShellState
 {
     /// <summary>Selected destination: 0 = Transactions, 1 = Repeating.</summary>
     public int Tab { get; set; }
+
+    /// <summary>The month shown by the Transactions strip + pager (demonstrator state).</summary>
+    public MonthOnly Month { get; set; }
 }
 
 /// <summary>
@@ -20,8 +25,14 @@ partial class ShellPage : Component<ShellState>
     protected override void OnMounted()
     {
         LoadPersistedTheme();
+        State.Month = MonthOnly.FromDate(DateOnly.FromDateTime(DateTime.Today));
         base.OnMounted();
     }
+
+    // Placeholder edit-lock for the demonstrator: 24 months back. The real floor comes from the Core read
+    // model when §5 is wired (this is throwaway scaffolding around the generic StripPager).
+    private static readonly MonthOnly EditLock =
+        MonthOnly.FromDate(DateOnly.FromDateTime(DateTime.Today)).Add(-24);
 
     public override VisualNode Render()
     {
@@ -65,8 +76,45 @@ partial class ShellPage : Component<ShellState>
         ).BackgroundColor(scheme.Primary).Padding(20, 12);
 
     private VisualNode RenderCentral(MaterialScheme scheme) =>
+        State.Tab == 0 ? RenderTransactions(scheme) : RenderRepeating(scheme);
+
+    // Transactions tab: the generic StripPager driven by a self-contained MonthOnly sequence (open-ended
+    // forward, bounded back at the placeholder EditLock). Page bodies are throwaway scrollable placeholders —
+    // the real ledger rows arrive with §5.
+    private VisualNode RenderTransactions(MaterialScheme scheme) =>
+        new StripPager<MonthOnly>()
+            .Selected(State.Month)
+            .Next(m => m.Add(1))
+            .Prev(m => m.CompareTo(EditLock) <= 0 ? null : m.Add(-1))
+            .Label(MonthLabel)
+            .Page(m => MonthPage(scheme, m))
+            .OnSelectedChanged(m => SetState(s => s.Month = m));
+
+    private static string MonthLabel(MonthOnly month) => month.FirstDay.ToString("MMM yy");
+
+    private static VisualNode MonthPage(MaterialScheme scheme, MonthOnly month)
+    {
+        var rows = Enumerable.Range(1, 30).Select(i =>
+            (VisualNode)Border(
+                Label($"{MonthLabel(month)} — item {i}")
+                    .FontSize(15)
+                    .TextColor(scheme.OnSurface)
+                    .VCenter()
+                    .Padding(16, 0)
+            )
+            .BackgroundColor(scheme.SurfaceContainer)
+            .StrokeThickness(0)
+            .HeightRequest(56)
+        );
+
+        // Return content only — StripPager wraps it in its own vertical scroller (it owns the scroll so the
+        // pan can arbitrate horizontal paging vs vertical scrolling).
+        return VStack([.. rows]).Spacing(8).Padding(16);
+    }
+
+    private VisualNode RenderRepeating(MaterialScheme scheme) =>
         VStack(
-            Label(State.Tab == 0 ? "Transactions" : "Repeating").FontSize(20).TextColor(scheme.OnSurface).HCenter(),
+            Label("Repeating").FontSize(20).TextColor(scheme.OnSurface).HCenter(),
             Label("Walking skeleton — content goes here").FontSize(13).TextColor(scheme.OnSurfaceVariant).HCenter(),
             Label("Theme (temporary)").FontSize(12).TextColor(scheme.OnSurfaceVariant).HCenter(),
             HStack(

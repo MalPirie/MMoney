@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      The pager logic (Controls\Pager\*.cs) is a deliberately MauiReactor-free seam. Link-compiling
+      those source files here lets the tests run headlessly on plain net10.0 with no MAUI workload or
+      device, while still exercising the real source. The MAUI-dependent StripPager Component lives a
+      level up (Controls\StripPager.cs) and is intentionally not linked. See docs/adr/0002-strip-pager.md.
+    -->
+    <Compile Include="..\Mobiorum.Material3\Controls\Pager\*.cs" LinkBase="Pager" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+</Project>
