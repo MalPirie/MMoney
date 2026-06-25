@@ -68,6 +68,9 @@ or domain layout.
   destinations (the nav bar is our own control, not MAUI Shell tabs).
 - The **FAB** runs **one unified add flow**, identical on both tabs (so adding from Repeating starts as "Does
   not repeat" until a repeat is set — accepted).
+- A **secondary FAB** is planned, placed **to the left of the primary FAB** in the same bottom-end add-flow
+  region. Both FABs are arranged by the shell (the generic `Fab` control is placement-agnostic); a secondary
+  FAB is an M3 colour/size variant added fluently when needed (`.Role(...)` / `.Size(...)`).
 
 ---
 
@@ -202,3 +205,9 @@ All additive; the event log stays a stable contract.
 - **Colour review on device** — the dark-mode chrome (light-orange banner/headers/status bar), the banner
   orange tone, and the income-green / expense-red.
 - The unified-FAB default on the Repeating tab ("Does not repeat") — left as-is.
+- **FAB press elevation** (M3 raises the FAB Level 3 → Level 4 on press) — deferred. Approach when revisited
+  (likely alongside the secondary FAB): track a pressed state in the `Fab` control via pointer-pressed/released
+  gestures and swap the Level 3↔4 shadow. **Verify first** that MauiReactor tweens a composite `Shadow`
+  (its `.WithAnimation()` reliably tweens scalars like `Scale`/`Opacity` — the nav-bar pill proves that path —
+  but a `Shadow` object may be swapped wholesale and pop rather than glide). Fallback: a small `Scale` bump on
+  press, which is guaranteed to animate but is less M3-correct.
