@@ -71,6 +71,7 @@ public sealed partial class StripPager<TItem> : Component<StripPagerState<TItem>
 
     private const double SelectionDurationMs = 220;
     private const int AnimSetupFrameMs = 16; // one frame to establish WithAnimation before tweening a value
+    private const double FrameBudgetMs = 16; // coalesce drag re-renders to ~one per frame
     private const double AxisSlopDip = 10;
     private const double StripHeightDip = 48;
     private const double StripCellWidthDip = 84;
@@ -85,6 +86,8 @@ public sealed partial class StripPager<TItem> : Component<StripPagerState<TItem>
     private double _lastTrue;          // last reconstructed true offset (for velocity)
     private long _lastTicks;           // timestamp of last sample (for velocity)
     private double _lastVelocity;      // DIP/s, signed (+ toward Prev)
+    private double _pendingFraction;   // latest drag fraction (may be un-applied due to coalescing)
+    private long _lastApplyTicks;      // timestamp of the last applied (rendered) drag frame
     private double _stripStartScroll;  // StripScroll at the start of a strip-browse drag
     private double _appliedStripDelta; // strip translation applied this gesture — undoes self-distortion
     private int _generation;           // bumps on every settle/jump to cancel stale async continuations
@@ -107,13 +110,15 @@ public sealed partial class StripPager<TItem> : Component<StripPagerState<TItem>
         var (prev, current, next) = PagerWindow.Pages(_selected, _next, _prev);
         var offset = State.Fraction * width; // live peek during a drag, and the slide during a commit
 
+        // Materialise only the neighbour we're actually moving toward — building all three pages of rows every
+        // drag frame is what stutters the gesture. At rest (Fraction 0) only the current page exists.
         var pages = new List<VisualNode> { PageHost(current, 0, width, offset) };
-        if (prev is { } p)
+        if (State.Fraction > 0 && prev is { } p)
         {
             pages.Insert(0, PageHost(p, -1, width, offset));
         }
 
-        if (next is { } n)
+        if (State.Fraction < 0 && next is { } n)
         {
             pages.Add(PageHost(n, 1, width, offset));
         }
@@ -239,7 +244,9 @@ public sealed partial class StripPager<TItem> : Component<StripPagerState<TItem>
                 _appliedBodyOffset = 0;
                 _lastTrue = 0;
                 _lastVelocity = 0;
+                _pendingFraction = 0;
                 _lastTicks = Stopwatch.GetTimestamp();
+                _lastApplyTicks = 0;
                 break;
 
             case GestureStatus.Running:
@@ -281,9 +288,20 @@ public sealed partial class StripPager<TItem> : Component<StripPagerState<TItem>
                 _lastTrue = trueOffset;
                 _lastTicks = nowTicks;
 
-                var fraction = DragFraction(trueOffset / width);
-                SetState(s => s.Fraction = fraction);
-                _appliedBodyOffset = fraction * width;
+                _pendingFraction = DragFraction(trueOffset / width);
+
+                // Coalesce: re-render at most once per frame budget. A real finger floods motion events faster
+                // than the pages can re-render; without this the main thread saturates and the drag stalls.
+                // _appliedBodyOffset (the reconstruction baseline) only moves when we actually apply, so the
+                // skipped events still accumulate correctly via TotalX.
+                if ((nowTicks - _lastApplyTicks) / (double)Stopwatch.Frequency * 1000 >= FrameBudgetMs)
+                {
+                    var pending = _pendingFraction;
+                    SetState(s => s.Fraction = pending);
+                    _appliedBodyOffset = pending * width;
+                    _lastApplyTicks = nowTicks;
+                }
+
                 break;
 
             case GestureStatus.Completed:
@@ -297,9 +315,11 @@ public sealed partial class StripPager<TItem> : Component<StripPagerState<TItem>
 
                 if (wasHorizontal)
                 {
+                    // Use the latest (possibly un-applied) fraction so a throttled final frame still counts.
+                    SetState(s => s.Fraction = _pendingFraction);
                     var flick = Math.Abs(_lastVelocity) > FlickVelocityDipPerSec;
                     var decision = PagerGesture.Decide(
-                        State.Fraction, flick, hasPrev: _prev(_selected) is not null, hasNext: _next(_selected) is not null);
+                        _pendingFraction, flick, hasPrev: _prev(_selected) is not null, hasNext: _next(_selected) is not null);
                     Settle(decision);
                 }
 

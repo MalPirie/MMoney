@@ -107,6 +107,15 @@ The decisions below set the pattern for any later pager-like control, so they ar
   neighbour is already centred in both, so nothing visibly moves at the swap. An earlier two-phase
   version (slide the body, *then* re-centre the strip) read as separate steps; this supersedes it.
 
+- **Per-frame drag cost is kept down (MVU has no partial re-render).** Every `SetState` re-renders the
+  whole control, and MauiReactor offers no memo/`ShouldRender`, so a finger-drag that re-renders three
+  pages of rows per event saturates the main thread and the gesture stalls (observed on device: the
+  fraction advanced smoothly in logs while the screen froze). Two mitigations: (1) materialise only the
+  **one** neighbour being dragged toward (at rest, just the current page); (2) **coalesce** drag updates to
+  ~one `SetState` per frame (`FrameBudgetMs`) — skipped events still accumulate via `TotalX`, and the
+  reconstruction baseline only moves when a frame is actually applied. If a heavier real page still stalls,
+  the next step is to bypass MVU during the drag and set the native translation directly.
+
 - **`WithAnimation` is enabled one frame *before* a settle, never during a drag.** MauiReactor only
   tweens a property if its node carried `WithAnimation` on the previous render — so applying it in the
   *same* `SetState` that changes the value makes it **snap**. But leaving it on *every* render (so it is
