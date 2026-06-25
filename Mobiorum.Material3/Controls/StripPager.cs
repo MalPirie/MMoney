@@ -70,6 +70,7 @@ public sealed partial class StripPager<TItem> : Component<StripPagerState<TItem>
     [Prop] Action<TItem> _onSelectedChanged = _ => { };
 
     private const double SelectionDurationMs = 220;
+    private const double InstantMs = 1; // effectively no tween — used while a drag drives the value per-frame
     private const double AxisSlopDip = 10;
     private const double StripHeightDip = 48;
     private const double StripCellWidthDip = 84;
@@ -117,7 +118,10 @@ public sealed partial class StripPager<TItem> : Component<StripPagerState<TItem>
             pages.Add(PageHost(n, 1, width, offset));
         }
 
-        var body = Grid(pages.ToArray())
+        // WithAnimation must be present on every render to tween from the prior value (MauiReactor sets the
+        // animatable up across renders); the *duration* is what toggles tween-vs-instant. ~Instant while a
+        // drag drives the value per-frame; full on a jump crossfade.
+        return Grid(pages.ToArray())
             .IsClippedToBounds(true)
             .Opacity(State.BodyOpacity)
             .OnSizeChanged((Size size) =>
@@ -126,9 +130,8 @@ public sealed partial class StripPager<TItem> : Component<StripPagerState<TItem>
                 {
                     SetState(s => s.PageWidth = size.Width);
                 }
-            });
-
-        return State.Crossfading ? body.WithAnimation(duration: SelectionDurationMs) : body;
+            })
+            .WithAnimation(duration: State.Crossfading ? SelectionDurationMs : InstantMs);
     }
 
     private VisualNode PageHost(TItem item, int slot, double width, double offset)
@@ -142,9 +145,10 @@ public sealed partial class StripPager<TItem> : Component<StripPagerState<TItem>
             .Orientation(State.HorizontalLock ? ScrollOrientation.Neither : ScrollOrientation.Vertical)
             .WidthRequest(width)
             .HStart()
-            .TranslationX(slot * width + offset);
+            .TranslationX(slot * width + offset)
+            .WithAnimation(duration: State.BodyAnimating ? SelectionDurationMs : InstantMs);
 
-        return State.BodyAnimating ? host.WithAnimation(duration: SelectionDurationMs) : host;
+        return host;
     }
 
     // ---- Strip + underscore ------------------------------------------------------------------------------
@@ -183,9 +187,10 @@ public sealed partial class StripPager<TItem> : Component<StripPagerState<TItem>
         .HStart()
         .TranslationX(centre - (StripCellWidthDip / 2) + cell.Offset * StripCellWidthDip + State.StripScroll)
         .OnTapped(() => OnCellTapped(cell.Offset))
-        .OnPanUpdated(OnStripPan);
+        .OnPanUpdated(OnStripPan)
+        .WithAnimation(duration: State.StripAnimating ? SelectionDurationMs : InstantMs);
 
-        return State.StripAnimating ? node.WithAnimation(duration: SelectionDurationMs) : node;
+        return node;
     }
 
     private VisualNode Underscore(MaterialScheme scheme, double centre)
@@ -201,9 +206,10 @@ public sealed partial class StripPager<TItem> : Component<StripPagerState<TItem>
             .HeightRequest(UnderscoreHeightDip)
             .HStart()
             .VEnd()
-            .TranslationX(centre - (UnderscoreWidthDip / 2) + State.StripScroll + drift);
+            .TranslationX(centre - (UnderscoreWidthDip / 2) + State.StripScroll + drift)
+            .WithAnimation(duration: State.StripAnimating ? SelectionDurationMs : InstantMs);
 
-        return State.StripAnimating ? bar.WithAnimation(duration: SelectionDurationMs) : bar;
+        return bar;
     }
 
     /// <summary>The offset rendered in the selected state: the drag candidate while dragging, else the committed cell.</summary>
@@ -370,20 +376,6 @@ public sealed partial class StripPager<TItem> : Component<StripPagerState<TItem>
     private async void Settle(PagerCommit decision)
     {
         var generation = ++_generation;
-        var target = decision switch
-        {
-            PagerCommit.CommitPrev => 1.0,
-            PagerCommit.CommitNext => -1.0,
-            _ => 0.0,
-        };
-
-        // Phase A: slide the body toward the committed neighbour (or rubber-band back to 0 if not committing).
-        SetState(s => { s.BodyAnimating = true; s.Fraction = target; });
-        await Task.Delay((int)SelectionDurationMs);
-        if (_generation != generation)
-        {
-            return;
-        }
 
         var committed = decision switch
         {
@@ -394,28 +386,46 @@ public sealed partial class StripPager<TItem> : Component<StripPagerState<TItem>
 
         if (committed is not { } item)
         {
-            SetState(s => s.BodyAnimating = false); // rubber-band complete
+            // Nothing to commit (rubber-band, or a finite edge): ease the body back to rest.
+            SetState(s => { s.BodyAnimating = true; s.Fraction = 0; });
+            await Task.Delay((int)SelectionDurationMs);
+            if (_generation == generation)
+            {
+                SetState(s => s.BodyAnimating = false);
+            }
+
             return;
         }
 
-        // Phase B: swap selection (the body snaps seamlessly — the neighbour is already centred) and compensate
-        // the strip so it does not jump, then ease it back to centre. A 1-cell step here; |offset|>1 via Jump.
-        var stripStep = decision == PagerCommit.CommitNext ? 1 : -1;
-        SetState(s => { s.BodyAnimating = false; s.Fraction = 0; s.StripScroll += stripStep * StripCellWidthDip; });
-        _onSelectedChanged(item);
-
-        await Task.Delay(1);
+        // One coordinated motion: the body slides the neighbour in while the strip scrolls that same cell to
+        // centre and the underscore tracks — all in a single timeframe. (Reuses the swipe-commit slide, so a
+        // tap on an adjacent cell and a completed swipe animate identically.)
+        var toNext = decision == PagerCommit.CommitNext;
+        var bodyTarget = toNext ? -1.0 : 1.0;
+        var stripTarget = (toNext ? -1.0 : 1.0) * StripCellWidthDip;
+        SetState(s =>
+        {
+            s.BodyAnimating = true;
+            s.StripAnimating = true;
+            s.Fraction = bodyTarget;
+            s.StripScroll = stripTarget;
+        });
+        await Task.Delay((int)SelectionDurationMs);
         if (_generation != generation)
         {
             return;
         }
 
-        SetState(s => { s.StripAnimating = true; s.StripScroll = 0; });
-        await Task.Delay((int)SelectionDurationMs);
-        if (_generation == generation)
+        // Seamless swap: the neighbour is already centred in both the body and the strip, so resetting to rest
+        // with it selected produces no visible change.
+        SetState(s =>
         {
-            SetState(s => s.StripAnimating = false);
-        }
+            s.BodyAnimating = false;
+            s.StripAnimating = false;
+            s.Fraction = 0;
+            s.StripScroll = 0;
+        });
+        _onSelectedChanged(item);
     }
 
     private async void Jump(TItem target, int offset)

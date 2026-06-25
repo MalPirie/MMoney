@@ -95,11 +95,24 @@ The decisions below set the pattern for any later pager-like control, so they ar
   the opposite of the required "moves in step".
 
 - **One selection-animation duration governs every path.** A single `SelectionDuration`
-  (~200ms, echoing the nav bar's selection pill). Tapping an **adjacent** cell (offset ±1)
+  (~220ms, echoing the nav bar's selection pill). Tapping an **adjacent** cell (offset ±1)
   reuses the swipe-commit **slide**; tapping a **distant** cell (|offset| > 1) does **not**
   slide through the intermediate pages — the body **crossfades** while the underscore **glides**
   along the strip, both running **concurrently over the same duration** (fixed, independent of
   jump distance). The underscore never teleports; it is the constant across every selection.
+
+- **A commit/slide is one coordinated motion, not two phases.** Body slide, strip re-centre, and
+  underscore are animated **together in a single timeframe** (one `SetState` setting both the body
+  `Fraction` and the strip target), then an instant, seamless swap to the new selection — the
+  neighbour is already centred in both, so nothing visibly moves at the swap. An earlier two-phase
+  version (slide the body, *then* re-centre the strip) read as separate steps; this supersedes it.
+
+- **`WithAnimation` must be present on every render, with the *duration* toggled.** MauiReactor
+  only tweens a property if `WithAnimation` is set on the node across renders; applying it
+  *conditionally* (only during a settle) makes the value **snap** instead. So every animated node
+  carries `WithAnimation` always, with the duration set to ~instant (`InstantMs`) while a drag
+  drives the value per-frame and to `SelectionDuration` during a settle. This was found on device —
+  with the conditional form, every transition silently snapped.
 
 - **Pure logic sits in a MauiReactor-free seam.** Window materialisation + offset tagging, the
   commit decision (`fraction`/velocity/`null`-neighbour → commit-next / commit-prev /
