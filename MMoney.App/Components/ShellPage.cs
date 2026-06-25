@@ -1,5 +1,4 @@
 using System;
-using MauiReactor.Shapes;
 using Microsoft.Maui.ApplicationModel;
 using Microsoft.Maui.Storage;
 using Mobiorum.Material3;
@@ -32,8 +31,8 @@ partial class ShellPage : Component<ShellState>
             Grid("Auto,*,Auto", "*",
                 RenderBanner(scheme).GridRow(0),
                 RenderCentral(scheme).GridRow(1),
-                RenderNavBar(scheme).GridRow(2),
-                RenderFab(scheme).GridRow(1)
+                RenderNavBar().GridRow(2),
+                RenderFab().GridRow(1)
             )
         );
     }
@@ -77,56 +76,29 @@ partial class ShellPage : Component<ShellState>
             ).Spacing(8).HCenter()
         ).Spacing(12).Padding(24).VCenter().HCenter();
 
-    private VisualNode RenderNavBar(MaterialScheme scheme) =>
-        Grid("80", "*", // M3 navigation bar container height is 80dp
-            HStack(
-                NavItem(MaterialSymbols.List, "Transactions", 0, scheme),
-                NavItem(MaterialSymbols.Repeat, "Repeating", 1, scheme)
-            ).Spacing(4).Padding(8, 0).HStart().VCenter()
-        ).BackgroundColor(scheme.SurfaceContainer);
+    // Destinations are packed to the start so the floating FAB has clear space on the trailing side.
+    private VisualNode RenderNavBar() =>
+        new NavigationBar()
+            .Destinations([
+                new NavDestination(MaterialSymbols.List, "Transactions")
+                    .Selected(State.Tab == 0)
+                    .OnSelected(() => SetState(s => s.Tab = 0)),
+                new NavDestination(MaterialSymbols.Repeat, "Repeating")
+                    .Selected(State.Tab == 1)
+                    .OnSelected(() => SetState(s => s.Tab = 1))
+            ])
+            .Arrangement(NavArrangement.Start);
 
-    private VisualNode NavItem(string glyph, string label, int index, MaterialScheme scheme)
-    {
-        var selected = State.Tab == index;
-        return VStack(
-            Grid("32", "64",
-                Border()
-                    .BackgroundColor(scheme.SecondaryContainer)
-                    .StrokeThickness(0)
-                    .StrokeShape(new RoundRectangle().CornerRadius(16))
-                    .WidthRequest(56)
-                    .HeightRequest(32)
-                    .HCenter()
-                    .VCenter()
-                    .Scale(selected ? 1 : 0.5)
-                    .Opacity(selected ? 1 : 0)
-                    .WithAnimation(duration: 200),
-                Label(glyph)
-                    .FontFamily(MaterialSymbols.FontFamily)
-                    .FontSize(22)
-                    .TextColor(selected ? scheme.OnSecondaryContainer : scheme.OnSurfaceVariant)
-                    .HCenter()
-                    .VCenter()
-            ),
-            Label(label)
-                .FontSize(11)
-                .TextColor(selected ? scheme.OnSurface : scheme.OnSurfaceVariant)
-                .HCenter()
-        ).Spacing(2).Padding(6, 0).OnTapped(() => SetState(s => s.Tab = index));
-    }
-
-    private static VisualNode RenderFab(MaterialScheme scheme) =>
-        Button(MaterialSymbols.Add)
-            .FontFamily(MaterialSymbols.FontFamily)
-            .BackgroundColor(scheme.PrimaryContainer)
-            .TextColor(scheme.OnPrimaryContainer)
-            .FontSize(24)
-            .CornerRadius(28)
-            .WidthRequest(56)
-            .HeightRequest(56)
-            .HEnd()
-            .VEnd()
-            .Margin(0, 0, 16, -28); // half over the nav bar
+    // The FAB control is layout-agnostic; the shell positions it bottom-end, hovering half over the nav bar.
+    private static VisualNode RenderFab() =>
+        Grid(
+            new Fab()
+                .Icon(MaterialSymbols.Add)
+                .OnClicked(() => { }) // add flow not wired yet (walking skeleton)
+        )
+        .HEnd()
+        .VEnd()
+        .Margin(0, 0, 16, -28);
 
     private VisualNode ThemeButton(string label, AppTheme theme) =>
         Button(label).FontSize(12).OnClicked(() => SetTheme(theme));
