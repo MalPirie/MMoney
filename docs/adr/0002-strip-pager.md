@@ -51,6 +51,31 @@ The decisions below set the pattern for any later pager-like control, so they ar
   ledger (bounded rows), revisit if an unbounded page ever appears. Horizontal overscroll is our
   rubber-band; the inner vertical overscroll stays Android's native edge-stretch (different axes).
 
+- **Live peek works via gesture-distortion reconstruction.** Translating the page (for the
+  finger-following peek) moves the pan recogniser's own view, which *shrinks* MAUI's reported
+  `TotalX` (a feedback loop — verified on device: a full-width swipe registered as ~half, never
+  reaching the commit threshold). The true offset is recovered as `TotalX + alreadyApplied`, so the
+  control tracks the finger 1:1 without the gesture corrupting itself. The same reconstruction lets
+  the **strip be browsed sideways** (the cells translate, and their own pan would self-distort too).
+  An earlier build sidestepped this by *not* translating the body during a drag (peek deferred); the
+  reconstruction supersedes that and restores live peek.
+
+- **Flick commits on velocity; axis lock is strict.** Release velocity is sampled across pan
+  updates (no timestamp on the args, so a `Stopwatch` is used); a fast flick commits below the
+  distance threshold. Once the dominant axis is locked, the page's vertical scroller is set to
+  `Orientation=Neither` for the rest of the gesture, so a drag never drives both axes at once.
+
+- **Overlapping settles are cancelled by a generation counter.** Each commit/jump/recentre bumps a
+  generation; a stale async continuation (e.g. from a second swipe landing mid-settle) checks the
+  generation and bails, so rapid input always lands cleanly centred rather than leaving the
+  underscore stranded between cells.
+
+- **The strip scrolls independently; selection always re-centres.** The strip is its own
+  controlled coordinate (a `StripScroll` offset), not a native `ScrollView` — the user can browse it
+  sideways, and any selection change (swipe-commit, tap-slide, or tap-jump) animates it back so the
+  selected cell re-centres with the underscore seated. A *jump* (distance > 1) applies only to the
+  body (crossfade); the strip always *scrolls* to centre (it never jumps).
+
 - **Host owns selection; the control owns transient state.** `Selected` is the host's single
   source of truth; the control reports commits via `OnSelectedChanged` and re-derives its window
   (the navbar principle from ADR-0001, extended). All transient state — drag fraction, the
