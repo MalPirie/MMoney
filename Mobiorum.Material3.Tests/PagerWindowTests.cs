@@ -63,6 +63,45 @@ public class PagerWindowTests
     }
 
     [Fact]
+    public void StripRange_OffsetWindowAllForward_OmitsCurrent()
+    {
+        // A window browsed entirely forward of the selection (lo > 0) does not include offset 0.
+        var cells = PagerWindow.StripRange(0, Next(), Prev(), lo: 3, hi: 5);
+
+        Assert.Equal(new[] { 3, 4, 5 }, cells.Select(c => c.Offset));
+        Assert.Equal(new[] { 3, 4, 5 }, cells.Select(c => c.Item));
+    }
+
+    [Fact]
+    public void StripRange_AsymmetricWindow_GrowsForwardKeepsBack()
+    {
+        // The browse grows the forward edge while the back stays put: [-2 .. 6].
+        var cells = PagerWindow.StripRange(0, Next(), Prev(), lo: -2, hi: 6);
+
+        Assert.Equal(new[] { -2, -1, 0, 1, 2, 3, 4, 5, 6 }, cells.Select(c => c.Offset));
+    }
+
+    [Fact]
+    public void StripRange_TruncatesAtNullEdgeWithinTheWindow()
+    {
+        // Back edge (edit lock) at floor 0: a wide back window truncates to what exists.
+        var cells = PagerWindow.StripRange(1, Next(), Prev(floor: 0), lo: -5, hi: 2);
+
+        Assert.Equal(new[] { 0, 1, 2, 3 }, cells.Select(c => c.Item));
+        Assert.Equal(new[] { -1, 0, 1, 2 }, cells.Select(c => c.Offset));
+    }
+
+    [Fact]
+    public void StripRange_MatchesStrip_ForSymmetricRange()
+    {
+        var range = PagerWindow.StripRange(4, Next(ceiling: 6), Prev(floor: 2), lo: -3, hi: 3);
+        var strip = PagerWindow.Strip(4, Next(ceiling: 6), Prev(floor: 2), radius: 3);
+
+        Assert.Equal(strip.Select(c => c.Offset), range.Select(c => c.Offset));
+        Assert.Equal(strip.Select(c => c.Item), range.Select(c => c.Item));
+    }
+
+    [Fact]
     public void Pages_ExposesNullableNeighbours()
     {
         var (prev, current, next) = PagerWindow.Pages(0, Next(), Prev());

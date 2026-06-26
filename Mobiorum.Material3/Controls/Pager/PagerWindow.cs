@@ -25,26 +25,52 @@ public static class PagerWindow
     public static IReadOnlyList<PagerCell<TItem>> Strip<TItem>(
         TItem selected, Func<TItem, TItem?> next, Func<TItem, TItem?> prev, int radius)
         where TItem : struct
+        => StripRange(selected, next, prev, -radius, radius);
+
+    /// <summary>
+    /// Materialise strip cells with signed offsets in the inclusive range <c>[<paramref name="lo"/>,
+    /// <paramref name="hi"/>]</c> (each tagged with its absolute offset from <paramref name="selected"/>),
+    /// stopping early where <paramref name="next"/>/<paramref name="prev"/> returns <see langword="null"/>.
+    /// Cells are returned in display order (most-negative offset first). Used to <em>grow</em> the strip window
+    /// as it is browsed past its current edge, so a browse loads more cells without a selection change.
+    /// </summary>
+    public static IReadOnlyList<PagerCell<TItem>> StripRange<TItem>(
+        TItem selected, Func<TItem, TItem?> next, Func<TItem, TItem?> prev, int lo, int hi)
+        where TItem : struct
     {
-        var cells = new List<PagerCell<TItem>>(2 * radius + 1) { new(selected, 0) };
+        var cells = new List<PagerCell<TItem>>();
+        if (lo <= 0 && 0 <= hi)
+        {
+            cells.Add(new PagerCell<TItem>(selected, 0));
+        }
 
         var cursor = (TItem?)selected;
-        for (var offset = 1; offset <= radius && cursor is not null; offset++)
+        for (var offset = 1; offset <= hi && cursor is not null; offset++)
         {
             cursor = next(cursor.Value);
-            if (cursor is { } forward)
+            if (cursor is not { } forward)
+            {
+                break;
+            }
+
+            if (offset >= lo)
             {
                 cells.Add(new PagerCell<TItem>(forward, offset));
             }
         }
 
         cursor = selected;
-        for (var offset = 1; offset <= radius && cursor is not null; offset++)
+        for (var offset = -1; offset >= lo && cursor is not null; offset--)
         {
             cursor = prev(cursor.Value);
-            if (cursor is { } backward)
+            if (cursor is not { } backward)
             {
-                cells.Insert(0, new PagerCell<TItem>(backward, -offset));
+                break;
+            }
+
+            if (offset <= hi)
+            {
+                cells.Insert(0, new PagerCell<TItem>(backward, offset));
             }
         }
 

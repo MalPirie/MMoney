@@ -88,7 +88,8 @@ partial class ShellPage : Component<ShellState>
             .Prev(m => m.CompareTo(EditLock) <= 0 ? null : m.Add(-1))
             .Label(MonthLabel)
             .Page(m => MonthPage(scheme, m))
-            .OnSelectedChanged(m => SetState(s => s.Month = m));
+            .OnSelectedChanged(m => SetState(s => s.Month = m))
+            .WithKey("transactions-pager"); // stable identity so a Month change reuses the control, not rebuilds it
 
     private static string MonthLabel(MonthOnly month) => month.FirstDay.ToString("MMM yy");
 
