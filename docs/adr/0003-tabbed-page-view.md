@@ -6,9 +6,63 @@ The `StripPager` (ADR-0002) is being removed. Its central thesis — a label **s
 control built in smaller, independently-testable pieces. This ADR captures the new control's decisions as
 they are made.
 
-> **Status:** accepted (2026-06-29). Design grilled out; implementation pending, gated on the on-device
-> spikes called out below. A throwaway spike (`MMoney.App/Components/Sandbox/TabStripSpike.cs`, reached via
-> the dev-only **Sandbox** nav destination) probes the three risks; see `scripts/README.md` for its trace.
+> **Status:** accepted; design **validated on device** (2026-06-30). The throwaway spike
+> (`MMoney.App/Components/Sandbox/TabStripSpike.cs`, dev-only **Sandbox** nav destination) ended up proving
+> the *whole* interaction model, and reversed several decisions below. **Read "Spike outcomes" first — it is
+> the authoritative current architecture; the "Decisions" section is kept as the design rationale/history, and
+> bullets it supersedes are tagged.** Real `TabStrip<TItem>` implementation still pending.
+
+## Spike outcomes — device-validated architecture (2026-06-30, device `cb90e980`)
+
+This supersedes the tagged decisions below. All of it is working in the spike.
+
+- **Scroll: one `TranslationX` on the row, not `Margin`.** Tabs live in a `HorizontalStackLayout` (content-
+  width, overflowing a clipped viewport `Grid`); the whole row is moved by a single `TranslationX`. `Margin`
+  tracked the finger 1:1 but **jittered** (it forces a per-frame layout pass); `TranslationX` (a post-layout
+  transform) is smooth. The offset is **hard-clamped** (no gutter). *(Reverses "positioned by `Margin`".)*
+
+- **Gesture model: pan on the stationary viewport `Grid` + position-based tap.** The pan lives on the
+  stationary `Grid` (so there is **no self-distortion** — the pan view never moves). Tap is a
+  `TapGestureRecognizer` on the same `Grid`; the tapped tab is found by `GetPosition` → subtract the scroll →
+  hit-test the measured width map. **A per-tab tap recogniser starves the parent pan** (confirmed), so tap
+  *cannot* be per-tab — hence position hit-testing. *(Reverses the "per-tab pan + reconstruction" outcome.)*
+  - MauiReactor wrinkle: a gesture recogniser's `.Parent` is null, so the viewport's **platform view is
+    captured via a handler mapping keyed on `AutomationId`** (`MauiProgram`), used for tap scoping + native touch.
+
+- **Bounds: content-derived, no gutter.** `min = −max(0, Σtabwidths − viewportWidth)`, `max = 0`. Every tab is
+  reachable and lands flush at the edge; no empty gutter ever shows.
+
+- **Momentum (fling) is in.** A velocity-projected target tweened with `CubicOut`. Interruptible by
+  grab/tap/touch. *(Reverses "no momentum for v1".)*
+  - **Native touch-down stops the fling.** Android raises **no touch-down to MAUI for touch** (PointerPressed
+    and PointerEntered don't fire; only PointerReleased does, and pan needs movement). So
+    `MainActivity.DispatchTouchEvent` observes `ACTION_DOWN` and cancels the glide, **scoped to the strip's
+    bounds** via the captured platform view.
+
+- **Overscroll: M3 `ScaleX` stretch (no gutter).** The offset stays hard-clamped; pulling past an edge applies
+  a damped `ScaleX` stretch **on the viewport**, anchored at the pulled edge, springing back to 1 on release.
+  *(Augments the no-gutter clamp.)*
+
+- **Selection: M3 underscore + scroll-centre + state-layer pulse.** A **text-width** underscore (spans the
+  tab's label, i.e. tab − 2×padding) **slides and resizes** to the tapped tab; the strip **scroll-centres** the
+  tab; a **transient state-layer pulse** (fade in then out) plays on the tapped tab. No persistent fill;
+  selected text is `primary`/bold, unselected `OnSurfaceVariant`. M3 token durations, emphasized/decelerate
+  easing. *(Refines the selection-animation decision below; eases per M3, not "default easing ~220ms".)*
+
+- **Animation mechanism: `AnimationController`, not `WithAnimation`, for interruptible motion.** Every motion
+  here (fling, stretch spring-back, selection slide/centre/pulse) is grab/touch-interruptible, and
+  `WithAnimation` jumps `State` straight to the target (the in-between lives only in the native layer), so a
+  mid-flight interrupt can't resume from the on-screen position. `AnimationController` ticks
+  `DoubleAnimation.OnTick → SetState`, keeping `State` current → clean interrupt (`IsEnabled=false` stops it
+  where it is). Cost: a re-render per tick (acceptable; framework-driven, not a hand-rolled loop). **Gotcha:**
+  a `DoubleAnimation` must be wrapped in a `SequenceAnimation`/`ParallelAnimation` **container** to tick — a
+  bare tween directly under the controller silently no-ops.
+
+- **Known issues / deferred.** (1) **Remount zeroes the width map** — navigating away and back to the Sandbox
+  resets `_tabWidths`, and `OnSizeChanged` doesn't re-fire for `WithKey`-reused tabs, collapsing the bounds;
+  the real control must not depend solely on `OnSizeChanged` across remounts. (2) The **recall button** was
+  not spiked. (3) The spike is **finite** (41 measured tabs); the **semi-infinite windowing vs. measured-
+  widths** gap (you can't measure off-window tabs) is unresolved and must be designed in the real control.
 
 ## Decisions
 
@@ -26,15 +80,17 @@ they are made.
   native-drive gesture desync, `PagerGesture.Decide`'s commit logic). When the page is added later, a body
   interaction will *change selection* — which animates the strip to re-centre — not drive a shared fraction.
 
-- **Hand-driven direct-drag, no momentum for v1.** The strip is a hand-driven controlled coordinate (reusing
+- **Hand-driven direct-drag, no momentum for v1.** *(SUPERSEDED — fling momentum was added; see Spike
+  outcomes.)* The strip is a hand-driven controlled coordinate (reusing
   the existing browse + window-growth logic from `StripPager`), **not** a native horizontal `ScrollView`. The
   range is semi-infinite (open-ended forward, bounded back at the edit lock), which a native scroller's
   finite-extent/index model fights — the same reason ADR-0002 rejected `CarouselView`. The cost is no fling
   momentum: drag is 1:1, stops on lift. Accepted for v1; a hand-rolled fling-decay on release is a contained,
   reversible addition if "scroll all through the range" proves tedious.
 
-- **Cells are positioned by `Margin` (real layout), not `TranslationX`.** This reverses `StripPager`'s
-  approach. ADR-0002 documents the bug it was working around: on Android a tap is **not delivered through a
+- **Cells are positioned by `Margin` (real layout), not `TranslationX`.** *(SUPERSEDED — `Margin` jittered on
+  device; the row is moved by a single `TranslationX` and taps use position hit-testing. See Spike outcomes.)*
+  This reverses `StripPager`'s approach. ADR-0002 documents the bug it was working around: on Android a tap is **not delivered through a
   translated ancestor** (`StripPager.cs` never translates the container and instead bakes the scroll offset
   into every cell's `TranslationX`). `Margin` is real layout, so hit-testing follows it and the whole
   translate-and-lose-the-tap class of bug disappears. The per-frame layout cost — the historic objection to
@@ -81,7 +137,9 @@ they are made.
     negative-margin spike above; (3) the width map must be invalidated and re-measured on font/theme/label
     changes.
 
-- **Gesture model: spike a stationary pan-catcher first, fall back to per-tab pan.** Preferred arrangement is
+- **Gesture model: spike a stationary pan-catcher first, fall back to per-tab pan.** *(SUPERSEDED — the final
+  model is parent-`Grid` pan + position-based tap, neither model A nor per-tab pan. See Spike outcomes.)*
+  Preferred arrangement is
   **pan on a stationary viewport background** (it never moves, so there's no self-distortion to reconstruct
   and no moving-view hazard) + `OnTapped` on each tab. This is exactly what `StripPager.cs:228` claims Android
   won't deliver (tappable children swallow the parent's pan), so it must be confirmed on device. **Fallback:**
@@ -97,8 +155,11 @@ they are made.
     correct tab after scrolling (hit-testing follows `Margin`). Terminal-event reliability under the per-frame
     `Margin` layout pass is being confirmed in the per-tab-pan spike iteration.
 
-- **M3 selection animation: a dynamically-sliding underscore + a fill-and-fade on the tab.** (Revised
-  2026-06-29 after seeing M3 tabs in motion — reverses the earlier "indicator is static styling" call.) On
+- **M3 selection animation: a dynamically-sliding underscore + a fill-and-fade on the tab.** *(PARTLY
+  SUPERSEDED — the shape (sliding content-width underscore + transient state-layer) is right, but it is driven
+  by an `AnimationController` with M3-token durations + emphasized easing, not `WithAnimation` gating at
+  "~220ms default easing". The underscore spans the tab's **text**, not full width. See Spike outcomes.)*
+  (Revised 2026-06-29 after seeing M3 tabs in motion — reverses the earlier "indicator is static styling" call.) On
   selection the **underscore animates** from the previously-selected tab to the new one (a separately-animated
   element in stack coordinates, its target the new tab's position), and the tab shows an M3 **state-layer
   fill that fades** as the selection transition runs. Cutting swipe-commit still removes the old "underscore
