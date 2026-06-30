@@ -27,6 +27,15 @@ namespace MMoney.App
                     fonts.AddFont("MaterialSymbolsOutlined.ttf", "MaterialSymbols");
                 });
 
+            // Capture the TabStrip spike viewport's platform view (keyed by AutomationId) so the Activity can
+            // scope its touch-down glide-cancel to the strip's bounds. Spike-only; remove with the spike.
+            Microsoft.Maui.Handlers.LayoutHandler.Mapper.AppendToMapping("TabStripViewportCapture", (handler, view) =>
+            {
+                if ((view as Microsoft.Maui.Controls.VisualElement)?.AutomationId == Components.Sandbox.TabStripSpike.ViewportId)
+                {
+                    Components.Sandbox.TabStripSpike.StripPlatformView = handler.PlatformView;
+                }
+            });
 
             return builder.Build();
         }

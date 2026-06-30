@@ -13,4 +13,6 @@ public static class MaterialSymbols
     public static readonly string MoreVert = char.ConvertFromUtf32(0xE5D4);  // more_vert
     public static readonly string Repeat = char.ConvertFromUtf32(0xE040);    // repeat
     public static readonly string List = char.ConvertFromUtf32(0xE896);      // list
+    public static readonly string ChevronLeft = char.ConvertFromUtf32(0xE5CB);  // chevron_left
+    public static readonly string ChevronRight = char.ConvertFromUtf32(0xE5CC); // chevron_right
 }

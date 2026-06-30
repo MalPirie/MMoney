@@ -31,6 +31,23 @@ and the attached device (pass `-Serial <serial>` if more than one).
 
 Logging is deliberately light (no per-frame spam) so logcat doesn't drop the transitions.
 
+## TabStrip spike trace (ADR-0003)
+
+The dev-only **Sandbox** nav destination hosts `TabStripSpike` (`MMoney.App/Components/Sandbox/`), a throwaway
+control probing the three on-glass risks before `TabStrip` is built. `logs.ps1` captures its `[TabStripSpike]`
+lines alongside `StripPager`. What to look for:
+
+- `RENDER #n offset= sel=` — each render; `offset` is the single negative `Margin` the row is shifted by.
+- `PAN Started/Completed/Canceled offset=` — **risk 2 & 3:** does the *stationary container's* pan fire at
+  all when the drag starts on a tab (model A), and do terminal events still fire under the per-frame `Margin`
+  layout pass?
+- `TAP index= offset=` — **risk 1:** after scrolling the row left with a negative `Margin`, does the tap land
+  on the tab actually under the finger (index matches the visually-centred tab)?
+- Visually: does the row shift left and **clip** cleanly at a negative offset, or do tabs vanish / mis-hit?
+
+If the stationary catcher never logs `PAN`, fall back to per-tab pan; if negative `Margin` clips/mis-hits,
+fall back to per-cell `TranslationX` (see ADR-0003).
+
 ## Gotcha: launch crash `No view found for id 0x… (jumpToStart)`
 
 If the app crashes on launch with a fragment error like

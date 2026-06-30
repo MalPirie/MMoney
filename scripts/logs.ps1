@@ -16,8 +16,8 @@ $adb = Get-Adb
 $device = Get-Device -Serial $Serial
 
 if ($Follow) {
-    Write-Host "Streaming StripPager logs from $device (Ctrl+C to stop)..." -ForegroundColor Cyan
-    & $adb -s $device logcat -v time | Select-String -Pattern 'StripPager','Skipped \d+ frames'
+    Write-Host "Streaming StripPager/TabStripSpike logs from $device (Ctrl+C to stop)..." -ForegroundColor Cyan
+    & $adb -s $device logcat -v time | Select-String -Pattern 'StripPager','TabStripSpike','Skipped \d+ frames'
     return
 }
 
@@ -30,9 +30,9 @@ if (-not $Out) {
 Write-Host "Dumping logcat from $device -> $Out" -ForegroundColor Cyan
 & $adb -s $device logcat -d -v time *:V > $Out
 
-$trace = Get-Content $Out | Where-Object { $_ -match 'StripPager' }
-Write-Host "--- StripPager ($($trace.Count) lines) ---" -ForegroundColor Green
-$trace | ForEach-Object { ($_ -replace '^(\d\S*\s+\d\S*).*\[StripPager\] ', '$1  ') }
+$trace = Get-Content $Out | Where-Object { $_ -match 'StripPager|TabStripSpike' }
+Write-Host "--- StripPager / TabStripSpike ($($trace.Count) lines) ---" -ForegroundColor Green
+$trace | ForEach-Object { ($_ -replace '^(\d\S*\s+\d\S*).*\[(StripPager|TabStripSpike)\] ', '$1  ') }
 
 if ($All) {
     $jank = Get-Content $Out | Where-Object { $_ -match 'Skipped \d+ frames' }

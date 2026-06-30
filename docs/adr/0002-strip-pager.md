@@ -1,5 +1,9 @@
 # Strip + pager (`StripPager`) is a hand-built pan-driven pager, not `CarouselView`
 
+> **Superseded by [ADR-0003](0003-tabbed-page-view.md) (2026-06-29).** The lockstep strip+pager design below
+> proved too complex and unreliable on device; it is being replaced by `TabbedPageView`, which decouples the
+> tab strip from the page. Retained for the rationale and the hard-won device findings.
+
 The generic "synced strip + pager" control (`Mobiorum.Material3`) — a horizontal label
 **strip** with a moving **underscore** indicator above a swipeable **pager** body, kept in
 lockstep — is built as a custom pan-driven windowed pager rather than wrapping MAUI's

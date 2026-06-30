@@ -3,13 +3,14 @@ using System.Linq;
 using Microsoft.Maui.ApplicationModel;
 using Microsoft.Maui.Storage;
 using Mobiorum.Material3;
+using MMoney.App.Components.Sandbox;
 using MMoney.Core;
 
 namespace MMoney.App.Components;
 
 internal sealed class ShellState
 {
-    /// <summary>Selected destination: 0 = Transactions, 1 = Repeating.</summary>
+    /// <summary>Selected destination: 0 = Transactions, 1 = Repeating, 2 = Sandbox (dev-only, ADR-0003 spike).</summary>
     public int Tab { get; set; }
 
     /// <summary>The month shown by the Transactions strip + pager (demonstrator state).</summary>
@@ -75,8 +76,16 @@ partial class ShellPage : Component<ShellState>
             ).Spacing(2).GridColumn(1).GridRow(1)
         ).BackgroundColor(scheme.Primary).Padding(20, 12);
 
-    private VisualNode RenderCentral(MaterialScheme scheme) =>
-        State.Tab == 0 ? RenderTransactions(scheme) : RenderRepeating(scheme);
+    private VisualNode RenderCentral(MaterialScheme scheme) => State.Tab switch
+    {
+        0 => RenderTransactions(scheme),
+        1 => RenderRepeating(scheme),
+        _ => RenderSandbox(),
+    };
+
+    // Dev-only: hosts the throwaway TabStrip spike (ADR-0003) with the page area absent. Remove with the spike.
+    private static VisualNode RenderSandbox() =>
+        new TabStripSpike().WithKey("tabstrip-spike");
 
     // Transactions tab: the generic StripPager driven by a self-contained MonthOnly sequence (open-ended
     // forward, bounded back at the placeholder EditLock). Page bodies are throwaway scrollable placeholders —
@@ -134,7 +143,11 @@ partial class ShellPage : Component<ShellState>
                     .OnSelected(() => SetState(s => s.Tab = 0)),
                 new NavDestination(MaterialSymbols.Repeat, "Repeating")
                     .Selected(State.Tab == 1)
-                    .OnSelected(() => SetState(s => s.Tab = 1))
+                    .OnSelected(() => SetState(s => s.Tab = 1)),
+                // Dev-only destination for the ADR-0003 TabStrip spike. Remove with the spike.
+                new NavDestination(MaterialSymbols.ChevronRight, "Sandbox")
+                    .Selected(State.Tab == 2)
+                    .OnSelected(() => SetState(s => s.Tab = 2))
             ])
             .Arrangement(NavArrangement.Start);
 

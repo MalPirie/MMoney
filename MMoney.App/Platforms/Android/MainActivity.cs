@@ -29,6 +29,39 @@ namespace MMoney.App
             ApplySystemBarChrome();
         }
 
+        // Observe every touch-down before any view handles it (clobber-free — base is still called) and notify
+        // the TabStrip spike, so a touch cancels its in-flight glide. MAUI surfaces no touch-down for touch
+        // (PointerPressed/Entered don't fire on Android), and the Grid's single OnTouchListener is owned by
+        // MAUI's own gestures, so the Activity dispatch is the clean place to catch it. Spike-only; a real
+        // control would scope this to its own bounds or a custom platform view.
+        public override bool DispatchTouchEvent(MotionEvent? e)
+        {
+            if (e?.ActionMasked == MotionEventActions.Down && IsInsideStrip(e.RawX, e.RawY))
+            {
+                Components.Sandbox.TabStripSpike.NotifyTouchDown();
+            }
+
+            return base.DispatchTouchEvent(e);
+        }
+
+        // Scope the touch-down cancel to the strip: true only when the (screen-space) touch lands within the
+        // captured strip viewport's bounds. Before the view is captured, nothing is cancelled.
+        private static bool IsInsideStrip(float screenX, float screenY)
+        {
+            if (Components.Sandbox.TabStripSpike.StripPlatformView is not Android.Views.View strip)
+            {
+                System.Diagnostics.Debug.WriteLine("[TabStripSpike] touch-scope: NO strip view captured yet");
+                return false;
+            }
+
+            var loc = new int[2];
+            strip.GetLocationOnScreen(loc);
+            var inside = screenX >= loc[0] && screenX <= loc[0] + strip.Width
+                && screenY >= loc[1] && screenY <= loc[1] + strip.Height;
+            System.Diagnostics.Debug.WriteLine($"[TabStripSpike] touch-scope x={screenX:F0} y={screenY:F0} rect=({loc[0]},{loc[1]},{strip.Width},{strip.Height}) inside={inside}");
+            return inside;
+        }
+
         // Colour the system bars to match the app chrome, adapting to the active theme:
         //   status bar     = brand primary       (deep-orange + light icons / light-orange + dark icons)
         //   navigation bar = surfaceContainer     (matching the in-app bottom nav bar)
