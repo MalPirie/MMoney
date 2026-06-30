@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
+using MauiReactor.Animations;
 using MauiReactor.Shapes;
 using Mobiorum.Material3;
 
@@ -42,6 +43,15 @@ internal sealed class TabStripSpikeState
 
     /// <summary>Transient state-layer strength on the tapped tab: 1 on tap, fading to 0 (the M3 "set and fade").</summary>
     public double TapFade;
+
+    /// <summary>Drives the fling AnimationController; false stops it cleanly, leaving Committed at the last tick.</summary>
+    public bool FlingActive;
+
+    /// <summary>Drives the overscroll stretch spring-back AnimationController.</summary>
+    public bool StretchSettling;
+
+    /// <summary>Drives the selection slide/centre/pulse AnimationController; also gates the underscore source.</summary>
+    public bool Selecting;
 }
 
 /// <summary>
@@ -67,29 +77,30 @@ internal sealed partial class TabStripSpike : Component<TabStripSpikeState>
     private const double SpacingDip = 1; // gap between tabs (must match the HStack Spacing)
     private const double TapSlop = 5;    // a gesture that moved more than this suppresses the trailing tap
 
-    private const double FrameMs = 16;          // fling tick interval
     private const double VelocityWindowMs = 80; // window for release-velocity measurement (noise rejection)
     private const double FlickVelocity = 300;   // dip/s release speed required to start a fling
-    private const double MinFlingVelocity = 20; // dip/s below which the fling stops
-    private const double FlingDecay = 0.95;     // velocity multiplier per tick (friction)
+    private const double FlingDistance = 1.0;   // fling target distance = velocity × this (dip)
+    private const double FlingDurFactor = 0.5;  // fling duration (ms) = |velocity| × this, clamped
+    private const double FlingDurMin = 250;
+    private const double FlingDurMax = 1100;
     private const double MaxStretch = 0.15;     // max ScaleX delta at full overscroll (M3 stretch, ~1.15)
     private const double StretchScale = 250;    // overscroll dip controlling how fast the stretch ramps in
-    private const double SpringFactor = 0.25;   // ease-out factor per tick for the stretch spring-back
+    private const double StretchSettleMs = 250; // overscroll stretch spring-back duration
     private const double StateLayerOpacity = 0.12; // M3 primary state-layer alpha at full strength
     private const double UnderscoreHeight = 3;  // M3 active-indicator bar height (dip)
     private const double TabHPad = 16;          // tab horizontal padding; underscore spans the text (tab − 2×pad)
     private const double SlideDurationMs = 250; // M3 active-indicator slide + centre (medium1, emphasized/decelerate)
-    private const double FadeInMs = 100;        // M3 state-layer ramp-in (~short2)
-    private const double FadeOutMs = 200;       // M3 state-layer fade-out (~short4)
+    private const double FadeInMs = 200;        // state-layer ramp-in (doubled from M3 ~short2 to taste)
+    private const double FadeOutMs = 400;       // state-layer fade-out (doubled)
+    private const double SelectTotalMs = 600;   // selection animation length = max(slide, fade-in+out)
 
     private bool _panMoved;                       // set when a gesture exceeds TapSlop, so the end-of-pan tap is ignored
     private readonly double[] _tabWidths = new double[Count]; // each tab's measured width, captured post-layout
     private double _viewportWidth;                // measured width of the clipped viewport, for the scroll clamp
     private readonly List<(long Ticks, double Live)> _velSamples = new(); // recent drag samples for release velocity
-    private int _flingGen;                        // bumped to cancel an in-flight fling (a new grab or tap interrupts)
-    private int _stretchGen;                      // bumped on a new grab to cancel an in-flight stretch spring-back
-    private int _selectGen;                       // bumped to cancel an in-flight selection slide (new tap or grab)
-    private bool _selecting;                      // true while a selection slide animates the underscore/centring
+    private double _flingFrom, _flingTo, _flingDurMs; // fling DoubleAnimation params, set at release
+    private double _stretchFrom;                  // stretch spring-back start (current ScaleX) at release
+    private double _selFromIX, _selToIX, _selFromIW, _selToIW, _selFromCM, _selToCM; // selection slide endpoints
     private int _renderCount;
 
     // Native touch-down bridge: MainActivity.DispatchTouchEvent raises this on every ACTION_DOWN (the only
@@ -123,7 +134,13 @@ internal sealed partial class TabStripSpike : Component<TabStripSpikeState>
         base.OnWillUnmount();
     }
 
-    private void OnGlobalTouchDown() => _flingGen++;
+    private void OnGlobalTouchDown()
+    {
+        if (State.FlingActive)
+        {
+            SetState(s => s.FlingActive = false); // native touch-down stops the fling; Committed stays put
+        }
+    }
 
     public override VisualNode Render()
     {
@@ -145,7 +162,10 @@ internal sealed partial class TabStripSpike : Component<TabStripSpikeState>
             // The viewport is the STATIONARY, clipped container; the row inside it translates.
             Grid(
                 Row(scheme),
-                new TapGestureRecognizer().OnTapped(OnGridTapped) // position-aware tap; tab found by hit-testing
+                new TapGestureRecognizer().OnTapped(OnGridTapped), // position-aware tap; tab found by hit-testing
+                FlingController(),     // momentum glide (Committed)
+                StretchController(),   // overscroll stretch spring-back (Stretch)
+                SelectController()     // selection slide/centre/pulse (IndicatorX/W, Committed, TapFade)
             )
             .AutomationId(ViewportId) // marker so a handler mapping can grab this Grid's platform view (touch scoping)
             .HeightRequest(64)
@@ -159,6 +179,56 @@ internal sealed partial class TabStripSpike : Component<TabStripSpikeState>
         .Spacing(8)
         .Padding(16);
     }
+
+    // Framework-driven fling: always rendered, gated by IsEnabled(FlingActive). On enable the controller runs
+    // the DoubleAnimation; OnTick mirrors the value into State.Committed (kept current so a grab/touch
+    // interrupts cleanly); IsEnabled=false stops it.
+    private VisualNode FlingController() =>
+        new AnimationController
+        {
+            new SequenceAnimation
+            {
+                new DoubleAnimation()
+                    .StartValue(_flingFrom)
+                    .TargetValue(_flingTo)
+                    .Duration(TimeSpan.FromMilliseconds(_flingDurMs))
+                    .Easing(Easing.CubicOut)
+                    .OnTick(OnFlingTick)
+            }
+        }
+        .IsEnabled(State.FlingActive);
+
+    // Overscroll stretch spring-back: ScaleX eases from where the drag left it back to 1.
+    private VisualNode StretchController() =>
+        new AnimationController
+        {
+            new SequenceAnimation
+            {
+                new DoubleAnimation()
+                    .StartValue(_stretchFrom)
+                    .TargetValue(1)
+                    .Duration(TimeSpan.FromMilliseconds(StretchSettleMs))
+                    .Easing(Easing.CubicOut)
+                    .OnTick(OnStretchTick)
+            }
+        }
+        .IsEnabled(State.StretchSettling);
+
+    // Selection: one 0→1 progress drives the slide/centre (eased) and the state-layer pulse together.
+    private VisualNode SelectController() =>
+        new AnimationController
+        {
+            new SequenceAnimation
+            {
+                new DoubleAnimation()
+                    .StartValue(0)
+                    .TargetValue(1)
+                    .Duration(TimeSpan.FromMilliseconds(SelectTotalMs))
+                    .Easing(Easing.Linear) // linear progress; easing applied per-channel in OnSelectTick
+                    .OnTick(OnSelectTick)
+            }
+        }
+        .IsEnabled(State.Selecting);
 
     private VisualNode Row(MaterialScheme scheme)
     {
@@ -183,7 +253,7 @@ internal sealed partial class TabStripSpike : Component<TabStripSpikeState>
     private VisualNode Underscore(MaterialScheme scheme)
     {
         // While a selection slides, use the animated geometry; otherwise sit under the selected tab (rides scroll).
-        var (ix, iw) = _selecting ? (State.IndicatorX, State.IndicatorW) : IndicatorGeometry(State.Selected);
+        var (ix, iw) = State.Selecting ? (State.IndicatorX, State.IndicatorW) : IndicatorGeometry(State.Selected);
         return Border()
             .BackgroundColor(scheme.Primary)
             .StrokeThickness(0)
@@ -269,7 +339,10 @@ internal sealed partial class TabStripSpike : Component<TabStripSpikeState>
 
     private Task OnGridTapped(object? sender, MauiControls.TappedEventArgs e)
     {
-        _flingGen++; // a tap interrupts an in-flight glide
+        if (State.FlingActive || State.StretchSettling)
+        {
+            SetState(s => { s.FlingActive = false; s.StretchSettling = false; }); // a tap interrupts fling/stretch
+        }
 
         if (_panMoved)
         {
@@ -313,60 +386,50 @@ internal sealed partial class TabStripSpike : Component<TabStripSpikeState>
         return Task.CompletedTask;
     }
 
-    // Full M3 selection: slide+resize the underscore from the old tab to the new one, scroll the new tab toward
-    // centre, and fade the tapped tab's state layer — all over one coordinated, generation-guarded animation.
-    private async void SelectTab(int index)
+    // Full M3 selection: capture the slide endpoints + centre target, then let the SelectController's 0→1
+    // progress (OnSelectTick) drive the underscore slide/resize, the scroll-centre, and the state-layer pulse.
+    private void SelectTab(int index)
     {
-        var gen = ++_selectGen;
-        _selecting = true;
-
-        var (toX, toW) = IndicatorGeometry(index);                   // text-width indicator target
-        var (fromX, fromW) = IndicatorGeometry(State.Selected);      // begin the slide from the previously-selected tab
+        var (toX, toW) = IndicatorGeometry(index);              // text-width indicator target
+        var (fromX, fromW) = IndicatorGeometry(State.Selected); // slide from the previously-selected tab
         var (tabX, tabW) = TabGeometry(index);
         var (min, max) = ScrollBounds();
-        var targetCommitted = Math.Clamp(_viewportWidth / 2 - (tabX + tabW / 2), min, max); // centre, clamped (no gutter)
 
-        var startIX = fromX;
-        var startIW = fromW;
-        var startCM = State.Committed;
+        _selFromIX = fromX; _selToIX = toX;
+        _selFromIW = fromW; _selToIW = toW;
+        _selFromCM = State.Committed;
+        _selToCM = Math.Clamp(_viewportWidth / 2 - (tabX + tabW / 2), min, max); // centre, clamped (no gutter)
+
         SetState(s =>
         {
             s.Selected = index;
             s.IndicatorX = fromX;
             s.IndicatorW = fromW;
-            s.TapFade = 0; // pulse: ramp in, then out
+            s.TapFade = 0;
+            s.Selecting = true;
         });
+    }
 
-        // Time-based so the durations match M3 tokens; emphasized/decelerate ease on the slide, eased pulse.
-        var sw = Stopwatch.StartNew();
-        while (true)
+    private void OnSelectTick(double t)
+    {
+        if (!State.Selecting)
         {
-            if (_selectGen != gen)
-            {
-                return; // a new tap or a grab took over
-            }
-
-            var ms = sw.Elapsed.TotalMilliseconds;
-            var slide = EaseOutCubic(Math.Min(1, ms / SlideDurationMs));
-            var ix = startIX + (toX - startIX) * slide;
-            var iw = startIW + (toW - startIW) * slide;
-            var cm = startCM + (targetCommitted - startCM) * slide;
-            var fade = ms <= FadeInMs ? ms / FadeInMs : Math.Max(0, 1 - (ms - FadeInMs) / FadeOutMs);
-
-            SetState(s => { s.IndicatorX = ix; s.IndicatorW = iw; s.Committed = cm; s.TapFade = fade; });
-
-            if (ms >= SlideDurationMs && ms >= FadeInMs + FadeOutMs)
-            {
-                break;
-            }
-
-            await Task.Delay((int)FrameMs);
+            return;
         }
 
-        if (_selectGen == gen)
+        // Slide/centre finish at SlideDurationMs; the pulse runs the full SelectTotalMs (fade in then out).
+        var slide = EaseOutCubic(Math.Min(1, t * SelectTotalMs / SlideDurationMs));
+        var ix = _selFromIX + (_selToIX - _selFromIX) * slide;
+        var iw = _selFromIW + (_selToIW - _selFromIW) * slide;
+        var cm = _selFromCM + (_selToCM - _selFromCM) * slide;
+        var ms = t * SelectTotalMs;
+        var fade = ms <= FadeInMs ? ms / FadeInMs : Math.Max(0, 1 - (ms - FadeInMs) / FadeOutMs);
+
+        SetState(s => { s.IndicatorX = ix; s.IndicatorW = iw; s.Committed = cm; s.TapFade = fade; });
+
+        if (t >= 0.999)
         {
-            SetState(s => { s.IndicatorX = toX; s.IndicatorW = toW; s.Committed = targetCommitted; s.TapFade = 0; });
-            _selecting = false; // back to deriving the underscore from the selected tab (rides scroll)
+            SetState(s => { s.IndicatorX = _selToIX; s.IndicatorW = _selToIW; s.Committed = _selToCM; s.TapFade = 0; s.Selecting = false; });
         }
     }
 
@@ -383,53 +446,55 @@ internal sealed partial class TabStripSpike : Component<TabStripSpikeState>
         return dt > 0.001 ? (last.Live - first.Live) / dt : 0;
     }
 
-    // Hand-rolled momentum: glide Committed in the release direction, shedding velocity each tick, until it
-    // slows below MinFlingVelocity or hits a no-gutter bound. Interrupted by a new grab/tap via _flingGen.
-    private async void Fling(double velocity)
+    // Framework-driven fling: project a target from the release velocity and let the AnimationController tween
+    // Committed there with CubicOut. No hand-rolled loop; interruption is just IsEnabled=false (FlingActive).
+    private void StartFling(double velocity)
     {
-        var gen = ++_flingGen;
-        var v = velocity;
-        while (Math.Abs(v) > MinFlingVelocity)
+        var (min, max) = ScrollBounds();
+        _flingFrom = State.Committed;
+        _flingTo = Math.Clamp(State.Committed + velocity * FlingDistance, min, max);
+        _flingDurMs = Math.Clamp(Math.Abs(velocity) * FlingDurFactor, FlingDurMin, FlingDurMax);
+        Debug.WriteLine($"[TabStripSpike] FLING start from={_flingFrom:F0} to={_flingTo:F0} dur={_flingDurMs:F0} vel={velocity:F0}");
+        SetState(s => s.FlingActive = true);
+    }
+
+    private void OnFlingTick(double v)
+    {
+        if (!State.FlingActive)
         {
-            if (_flingGen != gen)
-            {
-                return; // a new grab or tap cancelled this glide
-            }
+            return; // ignore a stray/reset tick after we've stopped
+        }
 
-            var (min, max) = ScrollBounds();
-            var prev = State.Committed;
-            var next = Math.Clamp(prev + v * (FrameMs / 1000.0), min, max);
+        var (min, max) = ScrollBounds();
+        var next = Math.Clamp(v, min, max);
+        if (Math.Abs(next - State.Committed) > 0.01)
+        {
             SetState(s => s.Committed = next);
-            if (next == prev)
-            {
-                return; // hit a bound
-            }
+        }
 
-            v *= FlingDecay;
-            await Task.Delay((int)FrameMs);
+        if (Math.Abs(v - _flingTo) < 0.5 || next != v) // reached target, or hit a bound
+        {
+            SetState(s => s.FlingActive = false);
         }
     }
 
-    // Ease the overscroll ScaleX stretch back to 1 after release. Uses its own generation so a tap doesn't
-    // abort it (only a new grab does, via OnPan Started bumping _stretchGen).
-    private async void SettleStretch()
+    private void StartStretchSettle()
     {
-        var gen = ++_stretchGen;
-        while (Math.Abs(State.Stretch - 1) > 0.001)
-        {
-            if (_stretchGen != gen)
-            {
-                return;
-            }
+        _stretchFrom = State.Stretch;
+        SetState(s => s.StretchSettling = true);
+    }
 
-            var next = State.Stretch + (1 - State.Stretch) * SpringFactor;
-            SetState(s => s.Stretch = next);
-            await Task.Delay((int)FrameMs);
+    private void OnStretchTick(double v)
+    {
+        if (!State.StretchSettling)
+        {
+            return;
         }
 
-        if (_stretchGen == gen)
+        SetState(s => s.Stretch = v);
+        if (Math.Abs(v - 1) < 0.001)
         {
-            SetState(s => s.Stretch = 1);
+            SetState(s => s.StretchSettling = false);
         }
     }
 
@@ -438,10 +503,12 @@ internal sealed partial class TabStripSpike : Component<TabStripSpikeState>
         switch (e.StatusType)
         {
             case GestureStatus.Started:
-                _flingGen++;        // grabbing the row cancels any in-flight fling
-                _stretchGen++;      // ...and any in-flight stretch spring-back
-                _selectGen++;       // ...and any in-flight selection slide
-                _selecting = false; // underscore snaps to the selected tab and rides the drag
+                // grabbing the row cancels any in-flight controller animation; their last values stay in State.
+                if (State.FlingActive || State.StretchSettling || State.Selecting)
+                {
+                    SetState(s => { s.FlingActive = false; s.StretchSettling = false; s.Selecting = false; });
+                }
+
                 _velSamples.Clear();
                 Debug.WriteLine($"[TabStripSpike] PAN Started committed={State.Committed:F0}, id={e.GestureId}, total={e.TotalX}/{e.TotalY}");
                 break;
@@ -492,7 +559,7 @@ internal sealed partial class TabStripSpike : Component<TabStripSpikeState>
                 var (min, max) = ScrollBounds();
                 var desired = State.Committed + State.Live;
                 var overscrolled = desired < min || desired > max;
-                Debug.WriteLine($"[TabStripSpike] PAN {e.StatusType} committed={State.Committed:F0} live={State.Live:F0} desired={desired:F0} vel={velocity:F0} stretch={State.Stretch:F2}");
+                Debug.WriteLine($"[TabStripSpike] PAN {e.StatusType} desired={desired:F0} vel={velocity:F0} overscrolled={overscrolled}");
                 _panMoved = false;
 
                 // Settle flush at the edge (hard clamp — no gutter); the stretch springs back separately.
@@ -507,11 +574,11 @@ internal sealed partial class TabStripSpike : Component<TabStripSpikeState>
 
                 if (overscrolled)
                 {
-                    SettleStretch(); // spring the ScaleX stretch back to 1; no fling
+                    StartStretchSettle(); // spring the ScaleX stretch back to 1; no fling
                 }
                 else if (e.StatusType == GestureStatus.Completed && Math.Abs(velocity) > FlickVelocity)
                 {
-                    Fling(velocity); // a real flick launches a momentum glide
+                    StartFling(velocity); // a real flick launches a framework-driven momentum glide
                 }
 
                 break;
