@@ -2,6 +2,7 @@
 using MauiReactor.HotReload;
 using Microsoft.Extensions.Logging;
 using Microsoft.Maui.Hosting;
+using Mobiorum.Material3;
 using MMoney.App.Components;
 
 namespace MMoney.App
@@ -20,22 +21,13 @@ namespace MMoney.App
                     {
                         System.Diagnostics.Debug.WriteLine(e.ExceptionObject);
                     })
+                .UseMobiorumMaterial3() // registers the library's custom control handlers (TabStrip touch-down seam)
                 .ConfigureFonts(fonts =>
                 {
                     fonts.AddFont("OpenSans-Regular.ttf", "OpenSansRegular");
                     fonts.AddFont("OpenSans-Semibold.ttf", "OpenSansSemibold");
                     fonts.AddFont("MaterialSymbolsOutlined.ttf", "MaterialSymbols");
                 });
-
-            // Capture the TabStrip spike viewport's platform view (keyed by AutomationId) so the Activity can
-            // scope its touch-down glide-cancel to the strip's bounds. Spike-only; remove with the spike.
-            Microsoft.Maui.Handlers.LayoutHandler.Mapper.AppendToMapping("TabStripViewportCapture", (handler, view) =>
-            {
-                if ((view as Microsoft.Maui.Controls.VisualElement)?.AutomationId == Components.Sandbox.TabStripSpike.ViewportId)
-                {
-                    Components.Sandbox.TabStripSpike.StripPlatformView = handler.PlatformView;
-                }
-            });
 
             return builder.Build();
         }

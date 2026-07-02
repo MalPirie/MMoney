@@ -64,6 +64,165 @@ This supersedes the tagged decisions below. All of it is working in the spike.
   not spiked. (3) The spike is **finite** (41 measured tabs); the **semi-infinite windowing vs. measured-
   widths** gap (you can't measure off-window tabs) is unresolved and must be designed in the real control.
 
+## Real-control design (decided post-spike, 2026-07-02)
+
+These decisions govern the real `TabStrip<TItem>`; where they touch a spike outcome they say so. The control
+is generic: it must serve a **fixed finite range**, a **singly-bounded semi-infinite** range (MMoney — bounded
+back at the edit lock, open forward), and an **infinite-in-both-directions** range with **one code path**.
+
+> **Completion status (2026-07-02).** `TabStrip<TItem>` is **built, on `Mobiorum.Material3`, and
+> device-validated on Android** (`cb90e980`): tab-select + underscore slide (incl. the fast-re-tap restart fix),
+> scroll-centre, initial centre-on-load, pan/fling/overscroll-stretch, the Home button, the sliding window
+> during pan/fling, the hit-test with the Home leading column, and the **library-owned native touch-down seam**.
+> **Finite-range** geometry is covered headlessly (`StripLayoutTests` — both-ends clamp, narrower-than-viewport
+> no-scroll, single-item, "never slides") and drivable on glass via the `TabStripSandbox` mode toggle
+> (Infinite / Finite 0–15 / Fits 0–2). **Scope is Android-only for now** (the agreed bar). **Deferred to the
+> `TabPagedView` phase** (the strip+page composition MMoney needs): deleting `StripPager.cs` (still live in
+> `ShellPage.RenderTransactions`) and the `Pager*`→`Tab*` rename — both are entangled with StripPager, which
+> stays until `TabPagedView` replaces it, so renaming now would only churn soon-to-be-replaced code. Cross-
+> platform, accessibility, and a configurable style surface are explicitly **out of scope** for this pass.
+
+- **One sliding window, tracking the scroll (not the selection).** Resolves the "semi-infinite windowing vs.
+  measured widths" gap. The control materialises a bounded window via `PagerWindow.StripRange` (radius *R* each
+  side of the **viewport/scroll cursor**, not the selected tab — you scroll far from the selection, that is the
+  recall button's whole reason to exist). Tabs enter one edge and are evicted from the other. When the whole
+  range fits the window it degenerates to materialise-all, so fixed-range and semi-infinite are the *same* path
+  — no special-casing. *(Supersedes the spike's fixed `double[Count]` + global `Σwidths − viewport` bound, which
+  was a finite-range convenience that assumed every tab is materialised.)*
+  - **Slide trigger: buffered hysteresis, not recompute-per-frame.** The window materialises a **buffer**
+    beyond the viewport and re-windows only when the scroll comes within a margin of the materialised span's
+    edge — then it tops up by a chunk on that side and evicts the far side. So the hot path (drag/fling at
+    60fps) almost never re-windows or re-anchors; the sliding cost is paid occasionally at the buffer boundary,
+    which matters because a fling can cross many tabs fast. `StripLayout` owns the "within margin of the edge?"
+    test (it already holds the span edges vs. scroll). *(Recompute-viewport-centre-each-frame rejected: it
+    re-anchors on every tab-boundary crossing, including mid-fling, for no benefit on the smoothest-must-be path.)*
+    - **The hysteresis must run *during* motion, not only at rest** (device-found 2026-07-02): the slide check
+      fires every pan `Running` frame and every fling tick, or the window doesn't top up until the finger lifts
+      (blank past the buffer edge). Corollary — the **fling applies its controller value as a per-tick delta**,
+      not an absolute `Committed` set, so a mid-fling re-anchor composes instead of being overwritten each tick
+      (`_flingTo` stays in the controller's original frame, used only for progress/termination).
+
+- **Uniform floating origin; re-anchor atomically (no jitter, no branch).** One materialised item is the anchor
+  at content-space X = 0; the single `TranslationX` positions it. When a slide evicts the anchor, the control
+  re-anchors to a still-materialised item and adjusts `TranslationX` in the **same `SetState`**. Visual position
+  is `contentX + TranslationX`; both shift by ∓*w* in one render, so they cancel exactly — the rebase is
+  provably jitter-free. There is deliberately **no** "pin to the finite edge" special case: a fixed/singly-
+  bounded range simply never triggers a re-anchor because its window doesn't slide off a materialised end.
+
+- **The only real branch is *sequence edge* vs. *window edge*.** A `null` from `Prev`/`Next` means the
+  materialised span reached a **real end** → clamp hard (flush, no gutter, the M3 `ScaleX` overscroll stretch).
+  A materialised edge with a non-null neighbour is merely the **window edge** → do not clamp; slide and
+  materialise more. This fork is inherent to any windowed control (it answers "is there more?"), not an
+  origin/coordinate branch; it is data-driven off the null-neighbour signal `PagerWindow` already emits. Bounds
+  are therefore computed over the **materialised span only** (`Σ materialised widths`), which is always
+  well-defined because every materialised tab is measured.
+
+- **Home button: a fixed-left, non-directional "return to home" affordance (replaces return-to-selected).** The
+  control takes a nullable, host-supplied **`Home` item** (`.Home(TItem?)`) — the anchor to jump back to. The
+  generic control knows nothing of dates; **MMoney binds `Home` = the current-date tab** ("today"), pushing the
+  date knowledge to where it lives. A pinned button sits **always on the left** and tapping it returns to
+  `Home`. It is deliberately **not** side-aware: the earlier ADR rejected a
+  fixed-side button because a *chevron is directional* and lies when the target is off the other edge. Changing
+  the affordance from directional to **semantic** ("home") dissolves that — a **house icon does not point**, so
+  a fixed-left button is honest whether `Home` fell off the left (forward browse) or the right (browsing closed
+  months into the past). The two decisions are load-bearing on each other: fixed-left is only valid *because*
+  the icon is non-directional.
+  - **Always present, in its own pinned leading column — not a conditional overlay** (revised 2026-07-02 on
+    device). The button is a persistent fixed-left affordance whenever `Home` is set; the tabs scroll in the
+    remaining width beside it and never pass under it. This reverses the earlier "appears only while `Home` is
+    off-screen" call: as an overlay it covered the first tab, and popping in/out as `Home` scrolled past the
+    edge was jarring. A persistent leading action (like a browser home button) is calmer and removes the
+    "`Home` not visible?" test from the button-visibility path entirely.
+  - **Icon is a configurable M3 symbol**, default a house (`MaterialSymbols.Home`, codepoint `0xE88A`, to be
+    added).
+  - **Tapping Home is a proxy tap on the home tab — `SelectTab(Home)`.** It carries no behaviour of its own: it
+    *selects* today (fires `OnSelectedChanged(Home)`), moves/resizes the underscore, scroll-centres, and pulses
+    the state layer — the entire tap path reused, with the re-seed-and-snap fallback when Home is evicted. No
+    navigation-only path and no new callback (reuses `OnSelectedChanged`); "go to today" makes today current in
+    one gesture. The dropped case — peek at today without disturbing selection — is the return-to-selected use
+    we deliberately cut.
+  - **Return-to-selected is dropped.** One anchor only (`Home`); a home button *and* a return-to-selected
+    fighting for edge space is clutter, and in a ledger "today" is the meaningful anchor, not a transient tap.
+  - **Motion reuses the glide-when-close / snap-when-far rule:** if `Home` is within the materialised window
+    (off-screen but rendered), smooth scroll-centre to it; if `Home` has been evicted, re-seed the window
+    around `Home` (`StripRange(Home, …)`) and snap-centre — there is no continuous scroll path across an
+    unmeasured (possibly infinite) gap. "`Home` not visible" (button-shown test) is likewise cheap: not in the
+    window ⇒ not visible; in the window ⇒ the spike's measured hit-test.
+
+- **Width measurement: rendered `OnSizeChanged` widths, re-measured via a generation token (not persisted).**
+  Widths are the exact rendered pixels the spike proved (hit-tests and the underscore land perfectly) — no
+  analytic/`Microsoft.Maui.Graphics` prediction (rejected: it drifts from real pixels, misses the bold-selected
+  width the spike relies on, and — because our windowing never needs off-window widths — buys nothing). Fixes
+  the remount known-issue (#1) **without** a persisted cache: the width map stays plain instance state, and tab
+  views are keyed on **`(item, measurementGeneration)`**. The generation is fresh per component instance and
+  bumps on **font/theme/label** change. During scroll it is stable so `WithKey` reuses native views (smooth hot
+  path); on remount or an invalidating change the generation differs, keys miss the reused views, fresh views
+  are built, `OnSizeChanged` re-fires, and the map repopulates. One trigger covers both the remount zeroing and
+  the font/theme/label re-measure the ADR already requires; no static/host-threaded cache, no stale widths.
+  Cost: a one-off rebuild of the *visible* tabs on nav-in (a row of light labels — negligible). *(Analytic
+  seed-then-refine hybrid considered and rejected as unnecessary given exact rendered widths and no off-window
+  need.)*
+
+- **Native touch-down: a library-owned, per-instance platform seam (no app statics).** *(IMPLEMENTED +
+  device-validated 2026-07-02.)* The spike's glide-cancel-on-touch climbed to `MainActivity.DispatchTouchEvent`
+  + a static `StripPlatformView` captured via a `MauiProgram` `AutomationId` handler mapping — because Android
+  surfaces no touch-down for touch and the viewport `Grid`'s single `OnTouchListener` is owned by MAUI's pan.
+  The real control moves this **into `Mobiorum.Material3`**: the viewport is wrapped in a `TouchDownContentView`
+  (a `ContentView` subclass) whose Android handler (`TouchDownContentViewHandler`) swaps the platform view for a
+  `TouchObservingViewGroup` that peeks `ACTION_DOWN` in **`OnInterceptTouchEvent`** — returning `base` so it
+  observes **without consuming**, leaving the child's pan/tap untouched (the spike proved a consuming
+  `OnTouchListener` starves the pan; intercept-observe does not). It raises a **per-instance** callback
+  (`OnTouchDown` → the component's `OnGlobalTouchDown`), so no statics and no bounds-capture (a touch reaching
+  the wrapper's own interception is inherently inside its bounds). The static `TouchDown` event, `NotifyTouchDown`,
+  `StripPlatformView`, the `MainActivity.DispatchTouchEvent` override, and the `MauiProgram` `AppendToMapping`
+  capture are all deleted. The one remaining host touch-point is a single idiomatic **`builder.UseMobiorumMaterial3()`**
+  line (MAUI requires custom-control handlers to be registered on the app builder) — a clean library opt-in, not
+  spike glue. Cost: the library gains a `Platforms/Android` custom `ViewGroup` + handler + the `UseMobiorumMaterial3`
+  extension. **Scope: Android only for v1** — the cancel-on-touch exists *because* Android hides touch-down;
+  iOS/Windows surface pointer-pressed, so their seam is a later, simpler (or no-op) impl (non-Android registers
+  the stock `ContentViewHandler`, so the wrapper is a transparent pass-through there). *(Host-wired
+  `ITouchDownSource` abstraction rejected: boilerplate per consumer, and it re-introduces the
+  single-instance/statics smell.)*
+
+- **Pure seam: a cohesive `StripLayout` value type; the `Component` stays a single, thin shell.** All the
+  control's arithmetic — hit-test, content-X, scroll bounds, centre-offset, visibility, floating-origin
+  re-anchor — operates on one shared bundle (ordered materialised items, width map, scroll, viewport width,
+  and whether each end is a real edge). Unlike `PagerGesture`'s independent decisions, that is a cohesive view
+  over one state, so it is a **`readonly record struct StripLayout`** built from that bundle and exposing pure
+  queries (`HitTest`, `ContentX`, `Bounds`, `CentreOffset`, `IsVisible`, `ReAnchor`) — MauiReactor-free, unit-
+  tested in `Mobiorum.Material3.Tests` with hand-authored widths, exactly like the existing seam. `PagerWindow.
+  StripRange` stays alongside as the windowing primitive that *produces* the item list feeding `StripLayout`.
+  Free static functions (option b) were rejected: they would re-thread the same five-part bundle through every
+  query. The `TabStrip` `Component` is therefore **thin and single** (no sub-component tree): it holds `State`,
+  the three `AnimationController`s (fling / stretch / select), the pan/tap/touch-down wiring, and `WithKey`
+  rendering, and delegates **every number** to `StripLayout`. The underscore and home button are presentational,
+  driven by parent state — splitting them into their own stateful components would only re-thread state as props.
+
+- **Surface finalised at seven props; everything else internal.** The full public surface is the seven props
+  above and the `struct` constraint — **nothing more**. Deliberately kept off the surface: the **window radius /
+  slide triggers** (internal constants — a caller can't reason about `R`, so it's defaulted, promoted to a prop
+  only on a real need); all **M3 tokens** (selection/fling/stretch durations, easings, underscore height,
+  state-layer alpha, stretch ramp) live in the control per ADR-0001's "controls read `MaterialScheme.Current`
+  internally; callers never thread style through"; and **home-button visibility** is internal
+  (`StripLayout.IsVisible(Home)`) with no callback (the host already holds `Home` and `Selected`). No
+  speculative knobs are designed in ahead of a concrete need.
+
+- **All persistent control state lives in `State`, never in instance fields (MauiReactor re-instantiation).**
+  Device-found 2026-07-02 during the component port. When the **host** re-renders (e.g. its
+  `SetState(Selected=…)` in response to `OnSelectedChanged`), MauiReactor builds a **new component instance**
+  and migrates only the `State` object — plain instance fields reset to their defaults, and `OnMounted` does
+  **not** re-run for the new instance. The port had first stored the materialised window, the width map, the
+  measurement generation, and the last-selected marker in instance fields; they zeroed the instant a tab was
+  selected (the empty window then made `HitTest` misfire, wrongly tripped the reseed path, and left the
+  underscore/centre/Home-visibility reading stale coordinates — one bug, four symptoms). Fix: `TabStripState`
+  is **generic** (`TabStripState<TItem>`) and holds `Window`, `Widths`, `LastSelected`, `MeasurementGeneration`,
+  and `ViewportWidth`; only single-interaction transients (velocity samples, fling/stretch/selection endpoints,
+  the tap-slop flag) stay in fields, because a gesture/animation never crosses a host re-render. Seeding is
+  **lazy on first render** (guarded by a `Seeded` flag), not in `OnMounted`, so a migrated instance inherits the
+  seeded window. Corollary — a *reseed* (`SeedWindow` around a new centre) moves the content-coordinate origin,
+  so it must **snap** `Committed` into the new frame; the earlier "glide from the old `Committed`" was stale.
+  This is the load-bearing MauiReactor constraint for the whole control and any future `TabbedPageView`.
+
 ## Decisions
 
 - **`TabStrip<TItem>` is a standalone control; `TabbedPageView` is a later composite.** The v1 deliverable is
@@ -101,7 +260,9 @@ This supersedes the tagged decisions below. All of it is working in the spike.
     leftward scroll *and* tap delivery on a real device first. **Fallback:** per-cell `TranslationX` (the
     proven `StripPager` path) if Android misbehaves on negatives.
 
-- **A side-aware "return to selected" button.** When the selected tab is scrolled outside the viewport, a
+- **A side-aware "return to selected" button.** *(SUPERSEDED 2026-07-02 — target changed from selected to a
+  host-supplied Home item, and the affordance from a directional chevron to a fixed-left semantic icon. See
+  "Home button" under Real-control design.)* When the selected tab is scrolled outside the viewport, a
   pinned button appears on **whichever edge the selected tab went off** (forward browse pushes it off the
   left; backward browse off the right), carrying a **bare directional chevron** (no destination label — kept
   minimal). Tapping it animates the strip to re-centre the selected tab with **no selection change** (the
@@ -192,10 +353,14 @@ This supersedes the tagged decisions below. All of it is working in the spike.
   Reuses the `scripts/` build-deploy-log loop. `MonthOnly`/Transactions wiring waits for `TabbedPageView`
   (uniform month labels under-test variable width and would drag the page back into scope).
 
-- **API surface, and the old `Pager/` seam's disposition.** `TabStrip<TItem> where TItem : struct` exposes
-  exactly five props — `.Selected(TItem)` (host-owned source of truth), `.Next`/`.Prev`
+- **API surface, and the old `Pager/` seam's disposition.** *(UPDATED 2026-07-02 — the surface is now **seven**
+  props, not five: the Home button added `.Home(TItem?)` and `.HomeIcon(string)`. See "Home button" and the
+  finalisation below.)* `TabStrip<TItem> where TItem : struct` exposes
+  `.Selected(TItem)` (host-owned source of truth), `.Next`/`.Prev`
   (`Func<TItem, TItem?>`, null at a bound), `.Label(Func<TItem, string>)`, `.OnSelectedChanged(Action<TItem>)`
-  (fired immediately on tap). No `.Page(...)` — that is `TabbedPageView`'s later. The `struct` constraint
+  (fired immediately on tap), `.Home(TItem?)` (nullable — absence *is* the "no home button" signal, one source
+  of truth), and `.HomeIcon(string)` (M3 glyph, defaults to `MaterialSymbols.Home`). No `.Page(...)` — that is
+  `TabbedPageView`'s later. The `struct` constraint
   stays (the null-neighbour signal needs `Nullable<TItem>`, per ADR-0002). `PagerWindow`/`PagerCell`
   windowing is **kept and reused** (rename to `Tabs/`, `TabWindow`/`TabCell` when the new control lands);
   `PagerGesture` (commit/flick/damp) and `SelectionRoute` (slide/jump) become dead and are removed once

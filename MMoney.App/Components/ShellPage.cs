@@ -83,9 +83,10 @@ partial class ShellPage : Component<ShellState>
         _ => RenderSandbox(),
     };
 
-    // Dev-only: hosts the throwaway TabStrip spike (ADR-0003) with the page area absent. Remove with the spike.
+    // Dev-only: hosts the real TabStrip (ADR-0003) for on-device validation, page area absent. Remove with the
+    // Sandbox nav destination once TabStrip is proven on device.
     private static VisualNode RenderSandbox() =>
-        new TabStripSpike().WithKey("tabstrip-spike");
+        new TabStripSandbox().WithKey("tabstrip-sandbox");
 
     // Transactions tab: the generic StripPager driven by a self-contained MonthOnly sequence (open-ended
     // forward, bounded back at the placeholder EditLock). Page bodies are throwaway scrollable placeholders —
