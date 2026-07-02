@@ -4,9 +4,10 @@ namespace Mobiorum.Material3;
 
 /// <summary>
 /// Registration entry point for the Mobiorum Material 3 control library. Call <see cref="UseMobiorumMaterial3"/>
-/// from <c>MauiProgram</c> so the library's custom controls get their platform handlers (currently the
-/// <see cref="TouchDownContentView"/> touch-down observer that lets <see cref="TabStrip{TItem}"/> cancel a fling
-/// on first contact).
+/// from <c>MauiProgram</c> so the library's custom controls get their platform handlers: the
+/// <see cref="TouchDownContentView"/> touch-down observer (lets <see cref="TabStrip{TItem}"/> cancel a fling on
+/// first contact) and the <see cref="CarouselSettleObserver"/> scroll-settle hook (lets
+/// <see cref="TabbedPageView{TItem}"/> commit its selection only when the body settles).
 /// </summary>
 public static class MobiorumMaterial3
 {
@@ -22,6 +23,8 @@ public static class MobiorumMaterial3
             handlers.AddHandler<TouchDownContentView, Microsoft.Maui.Handlers.ContentViewHandler>();
 #endif
         });
+
+        CarouselSettleObserver.Install(); // adds the CarouselView scroll-settle hook (Android; no-op elsewhere)
 
         return builder;
     }

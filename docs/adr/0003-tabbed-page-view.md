@@ -366,3 +366,37 @@ back at the edit lock, open forward), and an **infinite-in-both-directions** ran
   `PagerGesture` (commit/flick/damp) and `SelectionRoute` (slide/jump) become dead and are removed once
   `TabStrip` replaces them. **`StripPager.cs` is kept in place until `TabStrip` is proven on device**, then
   deleted.
+
+## TabbedPageView body composition (decided 2026-07-02)
+
+`TabbedPageView<TItem>` is the composite MMoney needs: a `TabStrip` (top) over a swipeable page body, kept
+in **selection sync only** (no shared drag fraction — that is what sank ADR-0002). It is a thin composite
+that *contains* a `TabStrip`, not a reimplementation.
+
+- **Body = a native MAUI `CarouselView` (`Loop=false`).** Horizontal swipe/pan changes the current item; each
+  item's template is the host's page wrapped in a vertical `ScrollView`. The **axis arbitration** (horizontal
+  swipe vs. vertical scroll) is the *native* control's job — horizontal-outer + vertical-inner is the
+  well-supported nesting direction. This deletes the hand-rolled axis-lock + self-distortion pan that made
+  `StripPager` unreliable. `Loop=false` so finite ranges rubber-band at their real ends and never wrap.
+  *(Hand-rolled 3-page body rejected for v1: it reopens the ADR-0002 gesture swamp. A native `CarouselView`
+  gets reliable gestures for free.)*
+
+- **Feed = an append-on-demand buffer, not a fixed horizon and not a 3-item recycler.** `CarouselView` needs a
+  materialised `IList`; the sequence is `Next`/`Prev` (back-bounded at the edit lock, forward-open). The body
+  binds a buffer materialised from the back edge forward to a modest initial horizon; when the swiped
+  `Position` nears the end, the buffer **appends** the next chunk. Because MMoney is *back-bounded + forward-open*,
+  growth is **append-at-end only**, which never shifts an existing index — so it is unbounded forward (scroll
+  arbitrarily far, no false edge) with **no re-anchor and no visible jump**, and the back never grows. Items
+  are value-type structs (trivial memory); `CarouselView` virtualises the page *views*. *(Fixed bounded buffer
+  rejected: leaves an artificial forward edge. 3-item prev/current/next recycler rejected for the CarouselView
+  body: silent re-centring fights the native pager's opaque internal scroll — flicker risk; that recycler is
+  clean only when you own the scroll, i.e. a hand-rolled body.)*
+
+- **Selection is the only coupling.** Body swipe → `PositionChanged` → `OnSelectedChanged(item)` → the host's
+  `Selected` changes → the `TabStrip` re-centres via its normal animate-to-selected. Tab tap → `Selected`
+  changes → the body's `Position` is set to that item. No shared fraction; the two just mirror `Selected`.
+
+- **Coupled drag-lock (strip tracking the body's live drag 1:1) is a deferred enhancement.** It needs the
+  body's intra-swipe fraction, which `CarouselView` hides; its `Scrolled` (`HorizontalOffset`) event is the
+  likely hook, but it is **not free** — flagged so the choice is eyes-open. If a buttery coupled drag ever
+  becomes a hard requirement, a hand-rolled body is the only guarantee.

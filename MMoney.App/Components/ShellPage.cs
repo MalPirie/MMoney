@@ -80,13 +80,19 @@ partial class ShellPage : Component<ShellState>
     {
         0 => RenderTransactions(scheme),
         1 => RenderRepeating(scheme),
-        _ => RenderSandbox(),
+        2 => RenderSandbox(),
+        _ => RenderPagedSandbox(),
     };
 
     // Dev-only: hosts the real TabStrip (ADR-0003) for on-device validation, page area absent. Remove with the
     // Sandbox nav destination once TabStrip is proven on device.
     private static VisualNode RenderSandbox() =>
         new TabStripSandbox().WithKey("tabstrip-sandbox");
+
+    // Dev-only: hosts the TabbedPageView composite (TabStrip + swipeable CarouselView body) for on-device
+    // validation. Remove with the Paged nav destination once TabbedPageView is proven on device.
+    private static VisualNode RenderPagedSandbox() =>
+        new TabbedPageViewSandbox().WithKey("tabbedpageview-sandbox");
 
     // Transactions tab: the generic StripPager driven by a self-contained MonthOnly sequence (open-ended
     // forward, bounded back at the placeholder EditLock). Page bodies are throwaway scrollable placeholders —
@@ -145,10 +151,13 @@ partial class ShellPage : Component<ShellState>
                 new NavDestination(MaterialSymbols.Repeat, "Repeating")
                     .Selected(State.Tab == 1)
                     .OnSelected(() => SetState(s => s.Tab = 1)),
-                // Dev-only destination for the ADR-0003 TabStrip spike. Remove with the spike.
+                // Dev-only destinations for ADR-0003: the TabStrip alone, and the TabbedPageView composite.
                 new NavDestination(MaterialSymbols.ChevronRight, "Sandbox")
                     .Selected(State.Tab == 2)
-                    .OnSelected(() => SetState(s => s.Tab = 2))
+                    .OnSelected(() => SetState(s => s.Tab = 2)),
+                new NavDestination(MaterialSymbols.List, "Paged")
+                    .Selected(State.Tab == 3)
+                    .OnSelected(() => SetState(s => s.Tab = 3))
             ])
             .Arrangement(NavArrangement.Start);
 
