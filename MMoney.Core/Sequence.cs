@@ -21,6 +21,9 @@ public sealed record Sequence(
     /// <summary>The date the sequence first occurs.</summary>
     public DateOnly Origin => Id.Date;
 
+    /// <summary>The recurrence <see cref="Repeat.Schedule"/> that projects this sequence's occurrence dates.</summary>
+    public Schedule Schedule => new(Strategy, EndCondition, Origin);
+
     /// <summary>The per-account sequence number shared by the sequence and all of its occurrences.</summary>
     public int Number => Id.Sequence;
 }

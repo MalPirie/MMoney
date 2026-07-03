@@ -11,9 +11,15 @@ The event-sourced ledger aggregate. All state changes are events; reads are proj
 _Avoid_: ledger (the whole app), wallet.
 
 **Sequence**:
-A repeating-transaction rule — an origin, an amount/description, and a schedule. Lives in the registry; its
+A repeating-transaction rule — an origin, an amount/description, and a Schedule. Lives in the registry; its
 occurrences are projected, not stored.
-_Avoid_: template, recurrence, schedule (the schedule is the Sequence's `RepeatStrategy`).
+_Avoid_: template, recurrence.
+
+**Schedule**:
+The recurrence definition that projects a Sequence's occurrences: its `RepeatStrategy` (the interval pattern),
+`RepeatEndCondition`, and origin date. A value that knows its own occurrence dates.
+_Avoid_: strategy (only the interval pattern, one part of a Schedule), scheduler (the date maths live on the
+Schedule itself, not a separate engine).
 
 **Occurrence**:
 A single transaction projected from a Sequence on one date. Shares the Sequence's number.

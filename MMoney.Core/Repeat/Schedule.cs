@@ -1,43 +1,41 @@
 namespace MMoney.Core.Repeat;
 
 /// <summary>
-/// Turns a <see cref="RepeatStrategy"/>, a <see cref="RepeatEndCondition"/> and an origin date into the
-/// concrete dates an occurrence falls on. The single home of all repeat date maths; it carries no
-/// presentation concerns. <see cref="RepeatStrategy"/> stays pure data — the per-strategy generators live
-/// here, behind this small interface.
+/// The recurrence definition that projects a <see cref="Sequence"/>'s occurrences — its <see cref="RepeatStrategy"/>
+/// (the interval pattern), <see cref="RepeatEndCondition"/>, and <see cref="Origin"/> date — bundled into one value
+/// that knows its own occurrence dates. The single home of all repeat date maths; it carries no presentation
+/// concerns, and <see cref="RepeatStrategy"/> stays pure data (the per-strategy generators live here, private).
 /// </summary>
-public sealed class RepeatScheduler
+public readonly record struct Schedule(RepeatStrategy Strategy, RepeatEndCondition EndCondition, DateOnly Origin)
 {
     /// <summary>
-    /// The dates on which the schedule produces an occurrence within <paramref name="month"/>,
-    /// clamped to the month and to the schedule's end date.
+    /// The dates on which the schedule produces an occurrence within <paramref name="month"/>, clamped to the
+    /// month and to the schedule's end date.
     /// </summary>
-    public IEnumerable<DateOnly> DatesForMonth(
-        RepeatStrategy strategy, RepeatEndCondition endCondition, DateOnly origin, MonthOnly month)
+    public IEnumerable<DateOnly> DatesForMonth(MonthOnly month)
     {
-        var endDate = EndDate(strategy, endCondition, origin);
+        var endDate = EndDate();
         var monthEnd = month.LastDay;
         var effectiveEnd = endDate < monthEnd ? endDate : monthEnd;
-        var effectiveStart = month.FirstDay > origin ? month.FirstDay : origin;
+        var effectiveStart = month.FirstDay > Origin ? month.FirstDay : Origin;
 
-        return Dates(strategy, origin, effectiveStart).TakeWhile(date => date <= effectiveEnd);
+        return Dates(Strategy, Origin, effectiveStart).TakeWhile(date => date <= effectiveEnd);
     }
 
     /// <summary>
     /// The first date on or after <paramref name="from"/> on which the schedule produces an occurrence,
     /// or <see langword="null"/> when the schedule has already ended by then.
     /// </summary>
-    public DateOnly? NextOnOrAfter(
-        RepeatStrategy strategy, RepeatEndCondition endCondition, DateOnly origin, DateOnly from)
+    public DateOnly? NextOnOrAfter(DateOnly from)
     {
-        var endDate = EndDate(strategy, endCondition, origin);
-        var start = from > origin ? from : origin;
+        var endDate = EndDate();
+        var start = from > Origin ? from : Origin;
         if (start > endDate)
         {
             return null;
         }
 
-        return Dates(strategy, origin, start)
+        return Dates(Strategy, Origin, start)
             .TakeWhile(date => date <= endDate)
             .Cast<DateOnly?>()
             .FirstOrDefault();
@@ -47,12 +45,12 @@ public sealed class RepeatScheduler
     /// The final date the schedule produces an occurrence, or <see cref="DateOnly.MaxValue"/> when it
     /// repeats forever.
     /// </summary>
-    public DateOnly EndDate(RepeatStrategy strategy, RepeatEndCondition endCondition, DateOnly origin) => endCondition switch
+    public DateOnly EndDate() => EndCondition switch
     {
         RepeatEndCondition.Forever => DateOnly.MaxValue,
         RepeatEndCondition.UntilDate untilDate => untilDate.Date,
         RepeatEndCondition.AfterOccurrences afterOcc =>
-            Dates(strategy, origin, origin).Skip(afterOcc.Occurrences - 1).FirstOrDefault(DateOnly.MaxValue),
+            Dates(Strategy, Origin, Origin).Skip(afterOcc.Occurrences - 1).FirstOrDefault(DateOnly.MaxValue),
         _ => throw new InvalidOperationException()
     };
 

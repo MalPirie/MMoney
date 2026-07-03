@@ -3,8 +3,8 @@
 namespace MMoney.Core.Repeat;
 
 /// <summary>
-/// How a transaction recurs. A behaviour-free discriminated union: the date maths live in
-/// <see cref="RepeatScheduler"/>, and a strategy is serialized inside <see cref="AccountEvent.TransactionAdded"/>
+/// How a transaction recurs. A behaviour-free discriminated union: the date maths live on
+/// <see cref="Schedule"/>, and a strategy is serialized inside <see cref="AccountEvent.TransactionAdded"/>
 /// using the <c>$repeat</c> discriminator.
 /// </summary>
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "$repeat")]

@@ -6,7 +6,7 @@ namespace MMoney.Core.Repeat;
 /// Renders a <see cref="RepeatStrategy"/> and <see cref="RepeatEndCondition"/> as human-readable text.
 /// Pure presentation — depends on nothing in the ledger. When an end date is needed (for
 /// <see cref="RepeatEndCondition.AfterOccurrences"/>), the caller supplies it (see
-/// <see cref="RepeatScheduler.EndDate"/>).
+/// <see cref="Schedule.EndDate"/>).
 /// </summary>
 public static class RepeatDescription
 {
@@ -29,7 +29,7 @@ public static class RepeatDescription
 
     /// <summary>
     /// Describes when repetition ends, e.g. ", until 1 Jan 2027" or ", 12 occurrences (ends ...)".
-    /// <paramref name="endDate"/> is the schedule's computed end date (from <see cref="RepeatScheduler.EndDate"/>);
+    /// <paramref name="endDate"/> is the schedule's computed end date (from <see cref="Schedule.EndDate"/>);
     /// it is only consulted for <see cref="RepeatEndCondition.AfterOccurrences"/>.
     /// </summary>
     public static string DescribeEndCondition(RepeatEndCondition endCondition, DateOnly? endDate) => endCondition switch

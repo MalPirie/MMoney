@@ -18,8 +18,6 @@ internal sealed class TransactionCollection(bool ignoreMonthClosed)
 {
     private const string CarriedBalanceDescription = "Balance carried";
 
-    private readonly RepeatScheduler scheduler = new();
-
     // Facts and overrides, partitioned by month and kept in ascending TransactionId order within a month.
     private readonly SortedDictionary<MonthOnly, List<TransactionEntry>> partitions = [];
 
@@ -51,7 +49,7 @@ internal sealed class TransactionCollection(bool ignoreMonthClosed)
     /// completed sequence sits entirely in the read-only region and is no longer relevant.
     /// </summary>
     public IEnumerable<Sequence> GetSequences() => sequences.Values
-        .Where(s => scheduler.EndDate(s.Strategy, s.EndCondition, s.Origin) >= EarliestAllowedDate)
+        .Where(s => s.Schedule.EndDate() >= EarliestAllowedDate)
         .OrderBy(s => s.Id);
 
     /// <summary>
@@ -59,7 +57,7 @@ internal sealed class TransactionCollection(bool ignoreMonthClosed)
     /// with no upcoming occurrence, ordered by next due date (then by origin for stability).
     /// </summary>
     public IEnumerable<UpcomingSequence> GetUpcomingSequences(DateOnly asOf) => GetSequences()
-        .Select(s => (Sequence: s, Next: scheduler.NextOnOrAfter(s.Strategy, s.EndCondition, s.Origin, asOf)))
+        .Select(s => (Sequence: s, Next: s.Schedule.NextOnOrAfter(asOf)))
         .Where(x => x.Next is not null)
         .Select(x => new UpcomingSequence(x.Sequence, x.Next!.Value))
         .OrderBy(u => u.NextDue)
@@ -169,7 +167,7 @@ internal sealed class TransactionCollection(bool ignoreMonthClosed)
         foreach (var sequence in sequences.Values)
         {
             var from = sequence.Origin > floor ? sequence.Origin : floor;
-            var first = scheduler.NextOnOrAfter(sequence.Strategy, sequence.EndCondition, sequence.Origin, from);
+            var first = sequence.Schedule.NextOnOrAfter(from);
             if (first is DateOnly date)
             {
                 var month = MonthOnly.FromDate(date);
@@ -300,7 +298,7 @@ internal sealed class TransactionCollection(bool ignoreMonthClosed)
 
         foreach (var sequence in sequences.Values)
         {
-            foreach (var date in scheduler.DatesForMonth(sequence.Strategy, sequence.EndCondition, sequence.Origin, month))
+            foreach (var date in sequence.Schedule.DatesForMonth(month))
             {
                 if (date < floor)
                 {
@@ -329,12 +327,12 @@ internal sealed class TransactionCollection(bool ignoreMonthClosed)
     private bool IsProjectedOccurrence(TransactionId id) =>
         id.Date >= ProjectionFloor
         && sequences.TryGetValue(id.Sequence, out var sequence)
-        && scheduler.NextOnOrAfter(sequence.Strategy, sequence.EndCondition, sequence.Origin, id.Date) == id.Date;
+        && sequence.Schedule.NextOnOrAfter(id.Date) == id.Date;
 
     private void RemoveExpiredSequences(DateOnly lastDay)
     {
         var expired = sequences.Values
-            .Where(s => scheduler.EndDate(s.Strategy, s.EndCondition, s.Origin) <= lastDay)
+            .Where(s => s.Schedule.EndDate() <= lastDay)
             .Select(s => s.Number)
             .ToList();
 
