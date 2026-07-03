@@ -454,4 +454,39 @@ that *contains* a `TabStrip`, not a reimplementation.
     jump at once. Judged an extreme workflow for a month pager (the Home button covers "back to now"), so shipped
     as a limitation. The real fix is making the strip measure/settle far tabs *before* acting on a tap — a focused
     piece of work, not more spot-patches; `IsScrollAnimated(false)` for the body jump is unreliable (MAUI may
-    animate anyway).
+    animate anyway). *(Substantially mitigated 2026-07-03 by the estimate-width hardening below, which attacks the
+    same "unmeasured widths" root — hit-test and centre geometry now degrade gracefully — though the far-tap gesture
+    itself was not re-validated on device.)*
+
+- **Windowing hardened for the back edge and multi-page flings (2026-07-03).** Device testing at the edit-lock
+  (back) edge and under fast flings surfaced a family of bugs — underscore parked a whole tab off its selection, a
+  left gutter, the selection stranded off-screen with no recovery, and the strip freezing during a multi-page
+  fling then snapping at the end. An **A/B against the pre-refactor build confirmed all of them are pre-existing**
+  (present in the device-validated drag-lock build too — the back edge and multi-page flings were simply never
+  stressed), *not* introduced by the `StripTransition`/`CarouselSettle` refactors. The shared root: the strip's
+  geometry (`ContentLeft`, `CentreOffset`, the slide re-anchor) depended on the widths of tabs that are **off-screen
+  and may never fire `OnSizeChanged`**, so a `0` there shorted `ContentLeft` by a full tab. The fixes:
+  - **Estimated width for unmeasured tabs.** `Layout()` fills a not-yet-measured tab with the **mean measured
+    width** (a label default before anything measures) instead of `0`, so off-screen tabs can't corrupt the
+    geometry; the exact width refines it the instant a tab comes on-screen. This is the "seed-then-refine" the
+    original ADR considered and rejected — reinstated because the rejection assumed *every materialised tab
+    measures*, which is false for a front tab prepended off the left edge. One `EffectiveWidth` definition is now
+    shared by `Layout`, `GrowFront`, and `EvictFront` so the slide re-anchor rebases by the **same** width the
+    layout counts (a mismatch there was shoving the selection off-screen after a `GrowFront`).
+  - **Re-centre immediately after a reseed.** `TryInitialCentre` centres off the estimate-filled layout rather than
+    waiting on a measurement that may never come, so a reseed into an already-visited region no longer sticks the
+    selection off-screen.
+  - **Follow multi-page flings.** The live body-track fraction is **no longer clamped to ±1** (that clamp assumed
+    "one page per gesture"); `TrackView` brackets whichever two tabs the continuous position falls between, so the
+    strip scrolls/underlines across every page a fling crosses instead of freezing at the first neighbour. *(This
+    supersedes the "clamped ±1 fraction" wording in the drag-lock bullet above.)*
+  - **Grow the window during a track.** `EnsureTrackWindow` materialises tabs ahead of a live fling (**grow-only**;
+    eviction deferred to the post-commit `MaybeSlide`) so the follow doesn't stutter at the old window edge.
+  - **Residual limitations.** (1) The estimate is a *mean*, so off-screen centring is approximate to within a few
+    px per unmeasured tab until it scrolls into view — invisible for MMoney's near-uniform month labels, but a
+    control with wildly-varying label widths would see brief off-screen drift. (2) Track-window growth is grow-only,
+    so a very long single fling temporarily bloats the window until the next commit evicts back to the cap (bounded
+    by fling distance; not a leak). (3) **Body-level, not the strip:** a hard flick still flings the `CarouselView`
+    several pages by momentum (by design — "commits where it lands"), and the *first* interaction right after a
+    cold `dotnet run` launch can settle at position 0 (a MAUI `CarouselView` initial-`Position` timing quirk); a
+    normal reopen starts on today correctly. These are `CarouselView` behaviours, out of the strip's scope.
