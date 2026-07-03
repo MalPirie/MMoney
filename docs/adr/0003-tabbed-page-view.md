@@ -487,7 +487,7 @@ that *contains* a `TabStrip`, not a reimplementation.
     px per unmeasured tab until it scrolls into view — invisible for MMoney's near-uniform month labels, but a
     control with wildly-varying label widths would see brief off-screen drift. (2) Track-window growth is grow-only,
     so a very long single fling temporarily bloats the window until the next commit evicts back to the cap (bounded
-    by fling distance; not a leak). (3) **Body-level, not the strip:** a hard flick still flings the `CarouselView`
-    several pages by momentum (by design — "commits where it lands"), and the *first* interaction right after a
-    cold `dotnet run` launch can settle at position 0 (a MAUI `CarouselView` initial-`Position` timing quirk); a
-    normal reopen starts on today correctly. These are `CarouselView` behaviours, out of the strip's scope.
+    by fling distance; not a leak). (3) **Body-level, not the strip:** a hard flick flings the `CarouselView` several
+    pages by momentum and commits where it lands — by design, and the strip follows it faithfully. *(An apparent
+    "first pan after a cold `dotnet run` launch jumps to the edge" seen during testing did NOT reproduce in normal
+    use — it was a hard flick, not an initial-`Position` quirk; a normal launch/reopen starts on today correctly.)*
