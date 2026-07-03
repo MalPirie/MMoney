@@ -354,10 +354,19 @@ public sealed partial class TabStrip<TItem> : Component<TabStripState<TItem>>
 
     private VisualNode Row(MaterialScheme scheme, StripLayout layout)
     {
+        // The tab shown ACTIVE (bold / primary text) follows the underscore: while a body drag is tracking it is the
+        // tab the continuous position currently sits on (round(index + fraction)), not the frozen committed selection.
+        // So the bold highlight walks across tabs in step with the underscore during a multi-page fling instead of
+        // staying on the start tab until the commit lands. Not tracking → it is simply the selected tab.
+        var selIndex = State.Window.IndexOf(_selected);
+        var activeIndex = _track is double f && selIndex >= 0
+            ? Math.Clamp((int)Math.Round(selIndex + f, MidpointRounding.AwayFromZero), 0, State.Window.Count - 1)
+            : selIndex;
+
         var tabs = new List<VisualNode>(State.Window.Count);
         for (var i = 0; i < State.Window.Count; i++)
         {
-            tabs.Add(Tab(scheme, State.Window[i]));
+            tabs.Add(Tab(scheme, State.Window[i], i == activeIndex));
         }
 
         // While a body drag is tracking, the scroll follows the lockstep lerp; otherwise it is the clamped rest/
@@ -372,9 +381,11 @@ public sealed partial class TabStrip<TItem> : Component<TabStripState<TItem>>
             .TranslationX(track?.Scroll ?? layout.Scroll);
     }
 
-    private VisualNode Tab(MaterialScheme scheme, TItem item)
+    // <paramref name="selected"/> is the VISUAL active state (bold/primary), which during a body track follows the
+    // underscore rather than the committed selection — see Row. The measurement re-render below still keys off the
+    // real _selected (a geometry concern, not styling).
+    private VisualNode Tab(MaterialScheme scheme, TItem item, bool selected)
     {
-        var selected = item.Equals(_selected);
         var stateLayer = selected
             ? scheme.Primary.WithAlpha((float)(StateLayerOpacity * State.TapFade))
             : Colors.Transparent;
