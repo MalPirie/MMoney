@@ -80,9 +80,8 @@ public sealed class Account
         ArgumentException.ThrowIfNullOrWhiteSpace(description);
         ThrowIfDateTooEarly(date, nameof(date));
 
-        var nextSequence = sequence + 1;
-        Update(new AccountEvent.TransactionAdded(date, nextSequence, amount, description, strategy, endCondition));
-        return FindTransaction(new TransactionId(date, nextSequence));
+        var id = AddTransactionEvent(date, amount, description, strategy, endCondition);
+        return FindTransaction(id);
     }
 
     /// <summary>
@@ -185,7 +184,7 @@ public sealed class Account
             description = sequenceRule.Description;
         }
 
-        Update(new AccountEvent.TransactionAdded(newOrigin, sequence + 1, amount, description, newStrategy, newEndCondition));
+        AddTransactionEvent(newOrigin, amount, description, newStrategy, newEndCondition);
     }
 
     /// <summary>
@@ -208,8 +207,8 @@ public sealed class Account
         var sequenceRule = GetSequenceOrThrow(transaction);
 
         Update(new AccountEvent.SequenceRemoved(sequenceRule.Origin, sequenceRule.Number, fromDate));
-        Update(new AccountEvent.TransactionAdded(newDate, sequence + 1, sequenceRule.Amount, sequenceRule.Description,
-            sequenceRule.Strategy, sequenceRule.EndCondition));
+        AddTransactionEvent(newDate, sequenceRule.Amount, sequenceRule.Description,
+            sequenceRule.Strategy, sequenceRule.EndCondition);
     }
 
     /// <summary>Changes the amount of an existing transaction.</summary>
@@ -369,7 +368,9 @@ public sealed class Account
             transactions.AddFact(new Transaction(id, added.Amount, added.Description));
         }
 
-        sequence = added.Sequence;
+        // The counter tracks the highest number ever assigned, so sequence + 1 (in AddTransactionEvent) is always
+        // fresh. Max, not assignment, keeps that invariant regardless of the order events arrive on replay.
+        sequence = Math.Max(sequence, added.Sequence);
     }
 
     private Transaction FindTransaction(TransactionId id) =>
@@ -383,8 +384,22 @@ public sealed class Account
     private void SplitSequence(Sequence sequenceRule, DateOnly fromDate, decimal amount, string description)
     {
         Update(new AccountEvent.SequenceRemoved(sequenceRule.Origin, sequenceRule.Number, fromDate));
-        Update(new AccountEvent.TransactionAdded(fromDate, sequence + 1, amount, description,
-            sequenceRule.Strategy, sequenceRule.EndCondition));
+        AddTransactionEvent(fromDate, amount, description,
+            sequenceRule.Strategy, sequenceRule.EndCondition);
+    }
+
+    /// <summary>
+    /// The single point that mints a new per-account sequence number and emits the
+    /// <see cref="AccountEvent.TransactionAdded"/> that consumes it. Fusing the mint to the emit makes a number
+    /// collision impossible by construction: a fresh number cannot be obtained without the event that advances the
+    /// counter, which <see cref="Update"/> applies synchronously before the next mint. Returns the added id.
+    /// </summary>
+    private TransactionId AddTransactionEvent(DateOnly date, decimal amount, string description,
+        RepeatStrategy? strategy, RepeatEndCondition? endCondition)
+    {
+        var number = sequence + 1;
+        Update(new AccountEvent.TransactionAdded(date, number, amount, description, strategy, endCondition));
+        return new TransactionId(date, number);
     }
 
     private bool TransactionExists(DateOnly date, int sequence) =>
