@@ -31,7 +31,7 @@ partial class ShellPage : Component<ShellState>
     }
 
     // Placeholder edit-lock for the demonstrator: 24 months back. The real floor comes from the Core read
-    // model when §5 is wired (this is throwaway scaffolding around the generic StripPager).
+    // model when §5 is wired (this is throwaway scaffolding around the generic TabbedPageView).
     private static readonly MonthOnly EditLock =
         MonthOnly.FromDate(DateOnly.FromDateTime(DateTime.Today)).Add(-24);
 
@@ -94,11 +94,12 @@ partial class ShellPage : Component<ShellState>
     private static VisualNode RenderPagedSandbox() =>
         new TabbedPageViewSandbox().WithKey("tabbedpageview-sandbox");
 
-    // Transactions tab: the generic StripPager driven by a self-contained MonthOnly sequence (open-ended
-    // forward, bounded back at the placeholder EditLock). Page bodies are throwaway scrollable placeholders —
-    // the real ledger rows arrive with §5.
+    // Transactions tab: the generic TabbedPageView (strip + swipeable CarouselView body) driven by a self-contained
+    // MonthOnly sequence (open-ended forward, bounded back at the placeholder EditLock — Prev returns null at the
+    // lock so the buffer stops there). Page bodies are throwaway scrollable placeholders — real ledger rows arrive
+    // with §5.
     private VisualNode RenderTransactions(MaterialScheme scheme) =>
-        new StripPager<MonthOnly>()
+        new TabbedPageView<MonthOnly>()
             .Selected(State.Month)
             .Next(m => m.Add(1))
             .Prev(m => m.CompareTo(EditLock) <= 0 ? null : m.Add(-1))
@@ -124,8 +125,8 @@ partial class ShellPage : Component<ShellState>
             .HeightRequest(56)
         );
 
-        // Return content only — StripPager wraps it in its own vertical scroller (it owns the scroll so the
-        // pan can arbitrate horizontal paging vs vertical scrolling).
+        // Return content only — TabbedPageView wraps each page in its own vertical scroller (the CarouselView owns
+        // the horizontal axis, so swipe-paging vs vertical-scroll arbitration is the native control's job).
         return VStack([.. rows]).Spacing(8).Padding(16);
     }
 
