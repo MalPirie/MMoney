@@ -6,11 +6,15 @@ The `StripPager` (ADR-0002) is being removed. Its central thesis — a label **s
 control built in smaller, independently-testable pieces. This ADR captures the new control's decisions as
 they are made.
 
-> **Status:** accepted; design **validated on device** (2026-06-30). The throwaway spike
-> (`MMoney.App/Components/Sandbox/TabStripSpike.cs`, dev-only **Sandbox** nav destination) ended up proving
-> the *whole* interaction model, and reversed several decisions below. **Read "Spike outcomes" first — it is
-> the authoritative current architecture; the "Decisions" section is kept as the design rationale/history, and
-> bullets it supersedes are tagged.** Real `TabStrip<TItem>` implementation still pending.
+> **Status:** **implemented and device-validated on Android (2026-07-03).** Both controls are built on
+> `Mobiorum.Material3` and shipping: `TabStrip<TItem>` (freely-scrollable bar, Home button, native touch seam)
+> and `TabbedPageView<TItem>` (strip + `CarouselView` body), the latter now driving MMoney's live **Transactions**
+> tab. The **coupled drag-lock** (strip tracks the body swipe 1:1) is done — see "TabbedPageView body composition"
+> below. `StripPager` and the dead `Pager*` seam are deleted; the surviving windowing was renamed `StripWindow`/
+> `StripCell` under `Tabs/`. Scope is **Android-only** (the agreed bar); cross-platform, a11y, and a configurable
+> style surface remain out of scope. One known limitation is recorded under the drag-lock bullet. **Read "Spike
+> outcomes" first — it is the authoritative interaction architecture; the "Decisions" section is kept as design
+> rationale/history, and bullets it supersedes are tagged.**
 
 ## Spike outcomes — device-validated architecture (2026-06-30, device `cb90e980`)
 
@@ -76,11 +80,11 @@ back at the edit lock, open forward), and an **infinite-in-both-directions** ran
 > during pan/fling, the hit-test with the Home leading column, and the **library-owned native touch-down seam**.
 > **Finite-range** geometry is covered headlessly (`StripLayoutTests` — both-ends clamp, narrower-than-viewport
 > no-scroll, single-item, "never slides") and drivable on glass via the `TabStripSandbox` mode toggle
-> (Infinite / Finite 0–15 / Fits 0–2). **Scope is Android-only for now** (the agreed bar). **Deferred to the
-> `TabPagedView` phase** (the strip+page composition MMoney needs): deleting `StripPager.cs` (still live in
-> `ShellPage.RenderTransactions`) and the `Pager*`→`Tab*` rename — both are entangled with StripPager, which
-> stays until `TabPagedView` replaces it, so renaming now would only churn soon-to-be-replaced code. Cross-
-> platform, accessibility, and a configurable style surface are explicitly **out of scope** for this pass.
+> (Infinite / Finite 0–15 / Fits 0–2). **Scope is Android-only for now** (the agreed bar). **Done since (2026-07-03):**
+> `TabbedPageView` replaced `StripPager` on the live Transactions tab, `StripPager.cs` + the dead `Pager*` seam
+> (`PagerGesture`, `SelectionRoute`) were deleted, and the surviving windowing was renamed `PagerWindow`/`PagerCell`
+> → `StripWindow`/`StripCell` under `Tabs/`. The dev `TabStripSandbox`/`TabbedPageViewSandbox` scaffolding was
+> removed. Cross-platform, accessibility, and a configurable style surface remain explicitly **out of scope**.
 
 - **One sliding window, tracking the scroll (not the selection).** Resolves the "semi-infinite windowing vs.
   measured widths" gap. The control materialises a bounded window via `PagerWindow.StripRange` (radius *R* each
@@ -392,11 +396,33 @@ that *contains* a `TabStrip`, not a reimplementation.
   body: silent re-centring fights the native pager's opaque internal scroll — flicker risk; that recycler is
   clean only when you own the scroll, i.e. a hand-rolled body.)*
 
-- **Selection is the only coupling.** Body swipe → `PositionChanged` → `OnSelectedChanged(item)` → the host's
-  `Selected` changes → the `TabStrip` re-centres via its normal animate-to-selected. Tab tap → `Selected`
-  changes → the body's `Position` is set to that item. No shared fraction; the two just mirror `Selected`.
+- **Selection sync + a settle-only commit seam.** Body swipe and tab tap both mirror `Selected`, but MAUI's
+  `CarouselView` raises `PositionChanged`/`CurrentItemChanged` *optimistically* at the mid-drag crossover (no
+  settle-only managed event), and its old Items `RecyclerView` snaps unreliably on a slow release. So commit runs
+  off a **library-owned Android scroll-state seam** (`CarouselSettleObserver`): a non-clobbering
+  `RecyclerView.OnScrollListener` (via `CarouselViewHandler.Mapper.AppendToMapping`) that commits **only on
+  `ScrollStateIdle`** reading geometry (`FindFirstCompletelyVisibleItemPosition`), and **owns the snap** — if the
+  release left the body straddling two pages it drives `SmoothScrollToPosition(nearest)` and waits for the clean
+  idle. So the tab changes exactly once, at the point of no return. Tab tap → `Selected` → the body's `Position`
+  is set to that item.
 
-- **Coupled drag-lock (strip tracking the body's live drag 1:1) is a deferred enhancement.** It needs the
-  body's intra-swipe fraction, which `CarouselView` hides; its `Scrolled` (`HorizontalOffset`) event is the
-  likely hook, but it is **not free** — flagged so the choice is eyes-open. If a buttery coupled drag ever
-  becomes a hard requirement, a hand-rolled body is the only guarantee.
+- **Coupled drag-lock (strip tracks the body's live drag 1:1) — DONE, device-validated 2026-07-03.** The
+  "panning lock". **Body-drives-strip only** (strip drag stays free-scroll + tap). The settle seam supplies the
+  intra-swipe fraction that `CarouselView` hides: while a finger owns the scroll (`ScrollStateDragging` latched),
+  `OnScrolled` reports a **continuous page position** (`firstVisible + −child.Left/width`, exactly Android's
+  `ViewPager2.onPageScrolled`). `TabbedPageView` turns that into a clamped ±1 fraction and feeds `TabStrip` a new
+  `.Track(double?)` prop; `TabStrip` lerps the underscore **and** the scroll-centre between the selected tab and
+  its neighbour. It tracks *through* a snap-back (the seam keeps reporting as the body animates home) and commits
+  only at idle. Load-bearing device-found rules: the commit clears the live fraction by **direct mutation before**
+  reporting up, so the strip **snaps** (not glides) atomically onto the committed tab; the underscore width never
+  lerps toward an **unmeasured** neighbour (it would vanish); the window grows via `MaybeSlide` (re-centring on
+  every snap flicked the row); and a hard multi-page fling **commits where it lands** (a one-page clamp fought
+  MAUI's `Position` binding and snapped the body back to origin). *(The earlier "hand-rolled body is the only
+  guarantee" worry did not materialise — the RecyclerView seam gave a faithful `onPageScrolled` for free.)*
+  - **Known limitation (deferred 2026-07-03).** Tapping a **far** tab **after free-scrolling the strip a long
+    way** misbehaves (off-by-one hit-test, wrong/absent centre, body scrolls instead of jumping). All three share
+    one root: the distant tabs have **unmeasured widths**, which corrupts hit-testing, centre geometry, and the
+    jump at once. Judged an extreme workflow for a month pager (the Home button covers "back to now"), so shipped
+    as a limitation. The real fix is making the strip measure/settle far tabs *before* acting on a tap — a focused
+    piece of work, not more spot-patches; `IsScrollAnimated(false)` for the body jump is unreliable (MAUI may
+    animate anyway).
