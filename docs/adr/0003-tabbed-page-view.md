@@ -448,15 +448,16 @@ that *contains* a `TabStrip`, not a reimplementation.
   every snap flicked the row); and a hard multi-page fling **commits where it lands** (a one-page clamp fought
   MAUI's `Position` binding and snapped the body back to origin). *(The earlier "hand-rolled body is the only
   guarantee" worry did not materialise — the RecyclerView seam gave a faithful `onPageScrolled` for free.)*
-  - **Known limitation (deferred 2026-07-03).** Tapping a **far** tab **after free-scrolling the strip a long
-    way** misbehaves (off-by-one hit-test, wrong/absent centre, body scrolls instead of jumping). All three share
-    one root: the distant tabs have **unmeasured widths**, which corrupts hit-testing, centre geometry, and the
-    jump at once. Judged an extreme workflow for a month pager (the Home button covers "back to now"), so shipped
-    as a limitation. The real fix is making the strip measure/settle far tabs *before* acting on a tap — a focused
-    piece of work, not more spot-patches; `IsScrollAnimated(false)` for the body jump is unreliable (MAUI may
-    animate anyway). *(Substantially mitigated 2026-07-03 by the estimate-width hardening below, which attacks the
-    same "unmeasured widths" root — hit-test and centre geometry now degrade gracefully — though the far-tap gesture
-    itself was not re-validated on device.)*
+  - **Far-tap — RESOLVED (2026-07-03, was a deferred limitation).** Tapping a **far** tab **after free-scrolling
+    the strip a long way** used to misbehave three ways: off-by-one hit-test, wrong/absent centre, and the body
+    *scrolling* through every intervening page instead of jumping. The first two shared a root — distant tabs have
+    **unmeasured widths** — closed by the **estimate-width hardening** (see the windowing bullet below): a far tab
+    now carries a real-enough width, so hit-test and centre geometry hold. The third was MAUI's `CarouselView`
+    animating a distant in-source `Position` change (`IsScrollAnimated(false)` is unreliable); closed by
+    **rebuilding the body buffer around the target** on a far tap, so MAUI gets a *fresh ItemsSource* and
+    initialises AT the target with no in-source scroll — a clean instant jump (near taps, ≤ one page, still animate
+    the single page across). All three device-validated 2026-07-03. *(The original "measure/settle far tabs before
+    acting" plan proved unnecessary — the estimate makes the geometry degrade gracefully without it.)*
 
 - **Windowing hardened for the back edge and multi-page flings (2026-07-03).** Device testing at the edit-lock
   (back) edge and under fast flings surfaced a family of bugs — underscore parked a whole tab off its selection, a

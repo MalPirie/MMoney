@@ -135,18 +135,20 @@ public sealed partial class TabbedPageView<TItem> : Component<TabbedPageViewStat
         if (State.Built)
         {
             var idx = State.Buffer.IndexOf(_selected);
-            if (idx < 0)
+            if (idx < 0 || Math.Abs(idx - State.Position) > 1)
             {
+                // Not in the buffer, OR more than one page away: REBUILD the buffer around the selection rather than
+                // moving Position within the existing source. A distant in-source Position change is what MAUI's
+                // CarouselView animates unreliably (it scrolls through every intervening page); handing it a fresh
+                // ItemsSource makes it initialise AT the target with no in-source scroll — a clean jump. Cheap (the
+                // items are value structs), and only on a deliberate far tab tap, never on the swipe hot path.
                 BuildBuffer(_selected);
-                SetState(_ => { });
+                SetState(s => s.ScrollAnimated = false);
             }
             else if (idx != State.Position)
             {
-                // Adjacent tab → animate the page across; a jump of more than one → snap (best-effort; a reliable
-                // jump for a FAR tab reached after free-scrolling the strip a long way is a known gap — see the
-                // "revisit" note in memory/ADR-0003: the far tabs are unmeasured, which also skews hit-testing).
-                var animate = Math.Abs(idx - State.Position) <= 1;
-                SetState(s => { s.Position = idx; s.ScrollAnimated = animate; });
+                // Adjacent tab: animate the single page across (the smooth, reliable case).
+                SetState(s => { s.Position = idx; s.ScrollAnimated = true; });
             }
         }
 
