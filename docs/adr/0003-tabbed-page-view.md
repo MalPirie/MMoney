@@ -201,6 +201,23 @@ back at the edit lock, open forward), and an **infinite-in-both-directions** ran
   the three `AnimationController`s (fling / stretch / select), the pan/tap/touch-down wiring, and `WithKey`
   rendering, and delegates **every number** to `StripLayout`. The underscore and home button are presentational,
   driven by parent state — splitting them into their own stateful components would only re-thread state as props.
+  - **Second pure seam: `StripTransition`, the resting-transition resolver (added 2026-07-03).** `StripLayout`
+    deepened the *geometry*, but the layer above it — "a stimulus arrived; glide, snap, reseed, defer, or nothing?"
+    — was smeared across `AnimateToSelected`/`SnapToSelected`/`RecentreCommitted`/`Recentre`, each welded to a
+    `SetState` and therefore untestable. That layer is exactly where the drag-lock device bugs lived (underscore
+    one-tab-behind, backward-flick, far-tap). It is now a pure `abstract record StripTransition` with cases
+    `Glide`/`Snap`/`Reseed`/`Defer`/`None` and a static `Resolve(stimulus, input, layout, inset)` that composes
+    `StripLayout` and returns a decision; the `Component` is a thin executor (`Apply`) that maps the decision to
+    `SetState` + a controller restart. `Glide`/`Snap` carry concrete endpoints; `Reseed`/`Defer` are thin signals
+    (a reseed mutates the window, so post-reseed geometry cannot be pre-computed — the freshly-seeded tabs are
+    unmeasured, which is *why* those paths defer). Three stimuli (`SelectionChanged`, `TrackEnded`, `RecentreTap`)
+    collapse the four old entry points. `IndicatorGeometry` and `MeasuredThrough` moved onto `StripLayout` so the
+    resolver, the render's underscore, and the tests share one definition. Unit-tested headlessly in
+    `Mobiorum.Material3.Tests` (`StripTransitionTests`) with hand-authored widths, like `StripLayout`. One
+    behaviour change folded in: the rare "tap the selected tab after it scrolled off-window" path now reseeds-and-
+    defers (routing through the one validated centre-on-measure path) instead of snapping off possibly-unmeasured
+    widths with no self-correction — a latent-defect fix, not a feature change. `Defer` stays distinct from
+    `Reseed` precisely to preserve the anti-flick rule (never re-centre the window on an in-window snap).
 
 - **Surface finalised at seven props; everything else internal.** The full public surface is the seven props
   above and the `struct` constraint — **nothing more**. Deliberately kept off the surface: the **window radius /

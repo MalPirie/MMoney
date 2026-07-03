@@ -135,6 +135,34 @@ public readonly record struct StripLayout(
     }
 
     /// <summary>
+    /// The M3 selected-tab underscore geometry for tab <paramref name="index"/> (a content-width indicator): its
+    /// left edge is the tab's content-left plus <paramref name="inset"/>, its width the tab width minus twice the
+    /// inset (never negative). Shared by the transition resolver — which builds a glide/snap's from/to endpoints
+    /// from it — and the render's underscore, so both read one definition.
+    /// </summary>
+    public (double X, double W) IndicatorGeometry(int index, double inset) =>
+        (ContentLeft(index) + inset, Math.Max(0, Width(index) - 2 * inset));
+
+    /// <summary>
+    /// Whether every tab from the window start through <paramref name="hi"/> (inclusive) has a measured (positive)
+    /// width — the widths <see cref="ContentLeft"/>/<see cref="CentreOffset"/> need to place a glide's endpoints.
+    /// Goes false once the window has slid far tabs into view that have not laid out yet, so the resolver defers
+    /// (reseed/centre-on-measure) rather than gliding off zero widths onto the wrong tab.
+    /// </summary>
+    public bool MeasuredThrough(int hi)
+    {
+        for (var i = 0; i <= hi && i < Widths.Count; i++)
+        {
+            if (Widths[i] <= 0)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
     /// Whether the window must grow, and which side. Fires only toward an <em>open</em> end (a real edge is
     /// hard-clamped, never slid) when the scroll comes within <paramref name="margin"/> of that end's resting
     /// extent — giving the re-window lead time before the buffer shows through.

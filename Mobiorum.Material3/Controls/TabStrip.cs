@@ -190,30 +190,104 @@ public sealed partial class TabStrip<TItem> : Component<TabStripState<TItem>>
             SetState(s => { s.FlingActive = false; s.StretchSettling = false; s.Selecting = false; s.SelectRunning = false; });
         }
 
-        // Host changed the selection: normally animate the underscore/centre toward it (re-seeding + snapping if it
-        // was scrolled out of the window — the Home-evicted case). But if the change arrived while the body was
-        // being dragged, the underscore has ALREADY tracked onto the new tab in lockstep — adopt it (snap) instead
-        // of gliding back-then-forward. Guarded by Seeded so the initial mount doesn't animate before the seed.
+        // The two prop-driven resting transitions: a selection change (glide / snap / reseed, per the resolver's
+        // read of was-tracking + measurement), or a drag that ended without committing (re-pin the scroll). Both
+        // resolve to a pure decision and apply it. Guarded by Seeded so the initial mount doesn't act before the seed.
         if (State.Seeded && !_selected.Equals(State.LastSelected))
         {
-            if (State.WasTracking)
-            {
-                SnapToSelected();
-            }
-            else
-            {
-                AnimateToSelected();
-            }
+            ResolveAndApply(StripStimulus.SelectionChanged);
         }
         else if (State.WasTracking && _track is null)
         {
-            // A drag ended without changing the selection (a snap-back): make the tab's centred position the new
-            // rest so releasing the lockstep override doesn't jump the scroll back to a pre-drag free-scroll offset.
-            RecentreCommitted();
+            ResolveAndApply(StripStimulus.TrackEnded);
         }
 
         State.WasTracking = _track is not null;
         base.OnPropsChanged();
+    }
+
+    // Resolve the resting transition for a stimulus over the current layout, then execute it. The resolver owns every
+    // glide-vs-snap-vs-reseed-vs-defer decision (pure, table-tested); this component only applies the numbers.
+    private void ResolveAndApply(StripStimulus stimulus) =>
+        Apply(stimulus, StripTransition.Resolve(stimulus, BuildInput(), Layout(), TabHPad));
+
+    // The resolver's resolved inputs, read off State (the same Window.IndexOf / tracking lookups the control already
+    // does). LastSelected still holds the PREVIOUS selection here (advanced only after Apply), so PrevIndex is the
+    // tab a glide slides from and TargetIndex the tab to rest on.
+    private StripTransitionInput BuildInput() => new(
+        State.Window.IndexOf(State.LastSelected),
+        State.Window.IndexOf(_selected),
+        State.WasTracking);
+
+    // The sole side-effecting executor: a mechanical match on the decision. No further decisions live here — the
+    // resolver made them all. SeedWindow / MaybeSlide / TryInitialCentre and the SelectController remain the genuine
+    // window/animation executors the thin cases hand off to.
+    private void Apply(StripStimulus stimulus, StripTransition decision)
+    {
+        switch (decision)
+        {
+            case StripTransition.Glide g:
+                // Arm the slide (Selecting spans the restart gap so the underscore never flashes the rest position),
+                // then force a clean false→true edge on the controller so it replays from t=0 (an interrupting tap
+                // otherwise loads new endpoints against a clock already past the slide window and snaps).
+                SetState(s =>
+                {
+                    s.Live = 0;
+                    s.SelFromIX = g.FromIx; s.SelToIX = g.ToIx;
+                    s.SelFromIW = g.FromIw; s.SelToIW = g.ToIw;
+                    s.SelFromCM = g.FromCm; s.SelToCM = g.ToCm;
+                    s.IndicatorX = g.FromIx;
+                    s.IndicatorW = g.FromIw;
+                    s.TapFade = 0;
+                    s.Selecting = true;
+                    s.SelectRunning = false;
+                });
+                MauiControls.Application.Current?.Dispatcher.Dispatch(() => SetState(s => s.SelectRunning = true));
+                break;
+
+            case StripTransition.Snap snap:
+                SetState(s =>
+                {
+                    s.Live = 0;
+                    s.Committed = snap.Cm;
+                    if (snap.Ix is double ix)
+                    {
+                        s.IndicatorX = ix;
+                        s.IndicatorW = snap.Iw ?? 0;
+                    }
+
+                    s.TapFade = 0;
+                    s.Selecting = false;
+                    s.SelectRunning = false;
+                });
+                if (snap.ThenSlide)
+                {
+                    MaybeSlide(); // grow/evict the window toward the edge as the selection advances (rebased → no jump)
+                }
+
+                break;
+
+            case StripTransition.Reseed:
+                SeedWindow(_selected);        // re-centre a fresh, small window on the selection …
+                State.PendingCentre = true;   // … and let TryInitialCentre snap it once those few tabs measure
+                SetState(s => { s.Live = 0; s.TapFade = 0; s.Selecting = false; s.SelectRunning = false; });
+                break;
+
+            case StripTransition.Defer:
+                State.PendingCentre = true;    // in-window but unmeasured: centre-on-measure without moving the window
+                SetState(s => { s.Live = 0; s.TapFade = 0; s.Selecting = false; s.SelectRunning = false; });
+                break;
+
+            case StripTransition.None:
+                break;
+        }
+
+        // Baseline bookkeeping: a selection-carrying stimulus advances LastSelected regardless of the decision (a
+        // TrackEnded snap-back does not — the selection did not change). Stimulus-driven, matching the old methods.
+        if (stimulus is StripStimulus.SelectionChanged or StripStimulus.RecentreTap)
+        {
+            State.LastSelected = _selected;
+        }
     }
 
     public override VisualNode Render()
@@ -335,7 +409,7 @@ public sealed partial class TabStrip<TItem> : Component<TabStripState<TItem>>
         // A live drag drives the underscore off its lockstep lerp; otherwise it slides (Selecting) or sits at rest.
         var (ix, iw) = track is { } tr ? (tr.Ix, tr.Iw)
             : State.Selecting ? (State.IndicatorX, State.IndicatorW)
-            : IndicatorGeometry(layout, index);
+            : layout.IndicatorGeometry(index, TabHPad);
         return Border()
             .BackgroundColor(scheme.Primary)
             .StrokeThickness(0)
@@ -432,14 +506,6 @@ public sealed partial class TabStrip<TItem> : Component<TabStripState<TItem>>
         return probe with { Scroll = probe.Clamp(raw) };
     }
 
-    // The underscore spans the tab's TEXT (M3): its content-left plus padding, width minus 2×padding.
-    private (double X, double W) IndicatorGeometry(StripLayout layout, int index)
-    {
-        var x = layout.ContentLeft(index);
-        var w = index < State.Window.Count && State.Widths.TryGetValue(State.Window[index], out var tw) ? tw : 0;
-        return (x + TabHPad, Math.Max(0, w - 2 * TabHPad));
-    }
-
     // The lockstep override while the body is being dragged: lerp the scroll-centre and the underscore geometry
     // between the selected tab and the neighbour the drag heads toward, by |fraction|. Null when not tracking (or
     // the selected tab isn't materialised) — the strip then uses its normal rest/selection geometry.
@@ -458,8 +524,8 @@ public sealed partial class TabStrip<TItem> : Component<TabStripState<TItem>>
 
         var neighbour = Math.Clamp(index + (f >= 0 ? 1 : -1), 0, State.Window.Count - 1);
         var t = Math.Min(1, Math.Abs(f));
-        var (fx, fw) = IndicatorGeometry(layout, index);
-        var (tx, tw) = IndicatorGeometry(layout, neighbour);
+        var (fx, fw) = layout.IndicatorGeometry(index, TabHPad);
+        var (tx, tw) = layout.IndicatorGeometry(neighbour, TabHPad);
         var fromCentre = layout.CentreOffset(index);
         var scroll = fromCentre + (layout.CentreOffset(neighbour) - fromCentre) * t;
 
@@ -613,11 +679,11 @@ public sealed partial class TabStrip<TItem> : Component<TabStripState<TItem>>
         var item = State.Window[hit];
         if (item.Equals(_selected))
         {
-            Recentre(item); // tapping the selected tab only re-centres it (no report)
+            ResolveAndApply(StripStimulus.RecentreTap); // tapping the selected tab only re-centres it (no report)
         }
         else
         {
-            _onSelectedChanged(item); // fire immediately; the host's prop change drives AnimateToSelected
+            _onSelectedChanged(item); // fire immediately; the host's prop change drives the SelectionChanged transition
         }
 
         return Task.CompletedTask;
@@ -632,143 +698,12 @@ public sealed partial class TabStrip<TItem> : Component<TabStripState<TItem>>
 
         if (home.Equals(_selected))
         {
-            Recentre(home); // already selected but scrolled away — just glide/snap back
+            ResolveAndApply(StripStimulus.RecentreTap); // already selected but scrolled away — just glide/snap back
         }
         else
         {
-            _onSelectedChanged(home); // proxy tap; the prop change drives AnimateToSelected (re-seeds if evicted)
+            _onSelectedChanged(home); // proxy tap; the prop change drives the SelectionChanged transition (re-seeds if evicted)
         }
-    }
-
-    // True when every tab from the window start through <paramref name="hi"/> has a measured width — the widths
-    // CentreOffset/ContentLeft need to place a glide's endpoints. False after the window has slid far tabs into
-    // view that have not laid out yet.
-    private bool MeasuredThrough(int hi)
-    {
-        for (var i = 0; i <= hi && i < State.Window.Count; i++)
-        {
-            if (!State.Widths.TryGetValue(State.Window[i], out var w) || w <= 0)
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    // Underscore slide + scroll-centre + state-layer pulse toward the (host-set) selected tab. Glides only when the
-    // geometry from the window start through the target is fully measured; otherwise (target evicted, or a far tab
-    // reached across not-yet-measured tabs — e.g. after free-scrolling the strip a long way then tapping) it
-    // re-seeds around the selection and DEFERS the centre to TryInitialCentre, exactly like the initial load, so it
-    // never centres off unmeasured tabs and lands on the wrong one.
-    private void AnimateToSelected()
-    {
-        var prevIndex = State.Window.IndexOf(State.LastSelected);
-        var targetIndex = State.Window.IndexOf(_selected);
-        var canGlide = prevIndex >= 0 && targetIndex >= 0 && MeasuredThrough(Math.Max(prevIndex, targetIndex));
-
-        if (!canGlide)
-        {
-            SeedWindow(_selected);            // re-centre a fresh, small window on the selection …
-            State.LastSelected = _selected;
-            State.PendingCentre = true;       // … and let TryInitialCentre snap it once those few tabs measure
-            SetState(s => { s.Live = 0; s.TapFade = 0; s.Selecting = false; s.SelectRunning = false; });
-            return;
-        }
-
-        var layout = Layout();
-        var index = targetIndex;
-        var (toX, toW) = IndicatorGeometry(layout, index);
-        var centre = layout.CentreOffset(index);
-        State.LastSelected = _selected;
-
-        // In-window and fully measured: glide the underscore from the previous tab and ease the scroll to centre.
-        var (fromX, fromW) = IndicatorGeometry(layout, prevIndex);
-
-        // Arm the slide (Selecting stays true across the restart gap so the underscore never flashes the new
-        // tab's rest position), then force a clean false→true edge on the controller: without cycling it, an
-        // interrupting tap loads new endpoints but the still-running controller's clock is already past the
-        // slide window, so it snaps to the target instead of gliding.
-        SetState(s =>
-        {
-            s.Live = 0;
-            s.SelFromIX = fromX; s.SelToIX = toX;
-            s.SelFromIW = fromW; s.SelToIW = toW;
-            s.SelFromCM = s.Committed;
-            s.SelToCM = centre;
-            s.IndicatorX = fromX;
-            s.IndicatorW = fromW;
-            s.TapFade = 0;
-            s.Selecting = true;
-            s.SelectRunning = false; // drop the edge this frame …
-        });
-
-        // … then re-raise it next frame so the controller replays from t=0. State-held endpoints make the hop
-        // safe against a mid-gap re-instantiation; no host re-render is expected in the gap regardless.
-        MauiControls.Application.Current?.Dispatcher.Dispatch(() => SetState(s => s.SelectRunning = true));
-    }
-
-    // Adopt the selected tab as the resting position with NO glide — the drag lockstep already walked the underscore
-    // and scroll onto it, so gliding from the old tab would jump backwards then re-animate. Always RE-CENTRES the
-    // window on the new selection: lockstep navigation never runs the scroll-driven MaybeSlide that free-scroll uses,
-    // so without this the forward buffer runs out at the window edge and no tabs render past the selection.
-    private void SnapToSelected()
-    {
-        // Reseed ONLY if the selection was evicted from the window. Re-centring the window on every snap shifts its
-        // index-0 origin by a tab, which flicks the row (and the underscore riding it) for a frame on each one-page
-        // commit. Forward growth is handled by MaybeSlide below — continuity-preserving (it rebases), not a reseed.
-        if (!State.Window.Contains(_selected))
-        {
-            SeedWindow(_selected);
-        }
-
-        var index = State.Window.IndexOf(_selected);
-        if (index < 0)
-        {
-            State.LastSelected = _selected;
-            return; // not materialised yet (no width) — the next render's rest geometry will show it
-        }
-
-        State.LastSelected = _selected;
-
-        // If the window hasn't measured through the selection yet (a fast multi-page pan can land on a tab the strip
-        // never rendered), defer the centre to TryInitialCentre instead of centring off zero widths.
-        if (!MeasuredThrough(index))
-        {
-            State.PendingCentre = true;
-            SetState(s => { s.Live = 0; s.TapFade = 0; s.Selecting = false; s.SelectRunning = false; });
-            return;
-        }
-
-        var layout = Layout();
-        var (ix, iw) = IndicatorGeometry(layout, index);
-        var centre = layout.CentreOffset(index);
-        SetState(s =>
-        {
-            s.Live = 0;
-            s.Committed = centre;
-            s.IndicatorX = ix;
-            s.IndicatorW = iw;
-            s.TapFade = 0;
-            s.Selecting = false;
-            s.SelectRunning = false;
-        });
-
-        MaybeSlide(); // grow/evict the window toward the edge as the selection advances (rebased → no visual jump)
-    }
-
-    // A drag released without committing (snap-back): pin the resting scroll to the selected tab's centre so the
-    // lockstep release doesn't reveal a stale free-scroll offset. No selection change, so no underscore work.
-    private void RecentreCommitted()
-    {
-        var index = State.Window.IndexOf(_selected);
-        if (index < 0)
-        {
-            return;
-        }
-
-        var centre = Layout().CentreOffset(index);
-        SetState(s => { s.Live = 0; s.Committed = centre; });
     }
 
     private void OnSelectTick(double t)
@@ -792,49 +727,6 @@ public sealed partial class TabStrip<TItem> : Component<TabStripState<TItem>>
             SetState(s => { s.IndicatorX = s.SelToIX; s.IndicatorW = s.SelToIW; s.Committed = s.SelToCM; s.TapFade = 0; s.Selecting = false; s.SelectRunning = false; });
             MaybeSlide();
         }
-    }
-
-    // Glide (or snap, if evicted) the selected tab back to centre with no selection change.
-    private void Recentre(TItem item)
-    {
-        var reseeded = !State.Window.Contains(item);
-        if (reseeded)
-        {
-            SeedWindow(item);
-        }
-
-        var layout = Layout();
-        var index = State.Window.IndexOf(item);
-        if (index < 0)
-        {
-            return;
-        }
-
-        var (ix, iw) = IndicatorGeometry(layout, index);
-        var centre = layout.CentreOffset(index);
-        State.LastSelected = _selected;
-
-        if (reseeded)
-        {
-            // Reseed moved the coordinate origin — snap into the new frame (see AnimateToSelected).
-            SetState(s => { s.Live = 0; s.Committed = centre; s.IndicatorX = ix; s.IndicatorW = iw; s.TapFade = 0; s.Selecting = false; s.SelectRunning = false; });
-            return;
-        }
-
-        SetState(s =>
-        {
-            s.Live = 0;
-            s.SelFromIX = ix; s.SelToIX = ix;   // no underscore slide — same tab
-            s.SelFromIW = iw; s.SelToIW = iw;
-            s.SelFromCM = s.Committed;
-            s.SelToCM = centre;
-            s.IndicatorX = ix;
-            s.IndicatorW = iw;
-            s.TapFade = 0;
-            s.Selecting = true;
-            s.SelectRunning = false;
-        });
-        MauiControls.Application.Current?.Dispatcher.Dispatch(() => SetState(s => s.SelectRunning = true));
     }
 
     // ---- pan / fling / stretch (ported from the device-validated spike, bounds now from StripLayout) ------

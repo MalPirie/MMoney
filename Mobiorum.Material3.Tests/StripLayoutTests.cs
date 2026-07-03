@@ -238,6 +238,41 @@ public class StripLayoutTests
         Assert.Equal(-1, Layout(System.Array.Empty<double>()).HitTest(10));
     }
 
+    // ── underscore geometry ─────────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void IndicatorGeometry_SpansTheTabText_InsetOnBothSides()
+    {
+        var layout = Layout(new[] { 100.0, 100, 100 });
+        var (x, w) = layout.IndicatorGeometry(1, inset: 16);
+        Assert.Equal(116, x, 3); // content-left 100 + inset 16
+        Assert.Equal(68, w, 3);  // tab 100 − 2×16
+    }
+
+    [Fact]
+    public void IndicatorGeometry_ClampsWidthToZero_ForATabNarrowerThanTwiceTheInset()
+    {
+        var layout = Layout(new[] { 20.0 });
+        var (_, w) = layout.IndicatorGeometry(0, inset: 16); // 20 − 32 would be negative
+        Assert.Equal(0, w, 3);
+    }
+
+    // ── measured-through ────────────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void MeasuredThrough_TrueWhenEveryWidthUpToHiIsPositive()
+    {
+        Assert.True(Layout(new[] { 100.0, 100, 100 }).MeasuredThrough(2));
+    }
+
+    [Fact]
+    public void MeasuredThrough_FalseWhenAZeroWidthSitsAtOrBeforeHi()
+    {
+        var layout = Layout(new[] { 100.0, 0, 100 }); // tab 1 unmeasured
+        Assert.False(layout.MeasuredThrough(2)); // the gap at index 1 is within [0, hi]
+        Assert.True(layout.MeasuredThrough(0));  // but everything through index 0 is measured
+    }
+
     // ── re-anchor ───────────────────────────────────────────────────────────────────────────────────────
 
     [Fact]

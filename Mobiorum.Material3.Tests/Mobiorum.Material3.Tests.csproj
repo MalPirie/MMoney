@@ -10,7 +10,7 @@
 
   <ItemGroup>
     <!--
-      The tab geometry seams (Controls\Tabs\StripLayout.cs, Controls\Tabs\StripWindow.cs) are deliberately
+      The tab seams (Controls\Tabs\StripLayout.cs, StripWindow.cs, StripTransition.cs) are deliberately
       MauiReactor-free. Link-compiling those source files here lets the tests run headlessly on plain net10.0
       with no MAUI workload or device, while still exercising the real source. MAUI-dependent code — the
       Component (Controls\TabStrip.cs, Controls\TabbedPageView.cs) and the platform seams
@@ -20,6 +20,7 @@
     -->
     <Compile Include="..\Mobiorum.Material3\Controls\Tabs\StripLayout.cs" LinkBase="Tabs" />
     <Compile Include="..\Mobiorum.Material3\Controls\Tabs\StripWindow.cs" LinkBase="Tabs" />
+    <Compile Include="..\Mobiorum.Material3\Controls\Tabs\StripTransition.cs" LinkBase="Tabs" />
   </ItemGroup>
 
   <ItemGroup>
