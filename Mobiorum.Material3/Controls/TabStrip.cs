@@ -90,7 +90,7 @@ public sealed class TabStripState<TItem> where TItem : struct
 /// interaction state and reports taps via <see cref="OnSelectedChanged(Action{TItem})"/>.
 ///
 /// <para>All geometry is delegated to the pure <see cref="StripLayout"/> seam; the sequence is materialised as
-/// a sliding window (<see cref="PagerWindow.StripRange"/>) that tracks the scroll with buffered hysteresis.
+/// a sliding window (<see cref="StripWindow.StripRange"/>) that tracks the scroll with buffered hysteresis.
 /// See <c>docs/adr/0003-tabbed-page-view.md</c> ("Real-control design"). A native touch-down on the strip
 /// cancels an in-flight fling via the library-owned <see cref="TouchDownContentView"/> (Android only).</para>
 /// </summary>
@@ -410,7 +410,7 @@ public sealed partial class TabStrip<TItem> : Component<TabStripState<TItem>>
     private void SeedWindow(TItem centre)
     {
         State.Window.Clear();
-        foreach (var cell in PagerWindow.StripRange(centre, _next, _prev, -WindowRadius, WindowRadius))
+        foreach (var cell in StripWindow.StripRange(centre, _next, _prev, -WindowRadius, WindowRadius))
         {
             State.Window.Add(cell.Item);
         }

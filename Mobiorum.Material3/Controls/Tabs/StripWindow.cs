@@ -1,20 +1,21 @@
 namespace Mobiorum.Material3;
 
 /// <summary>
-/// One materialised cell of a <see cref="StripPager{TItem}"/> window: the item together with its
+/// One materialised cell of a <see cref="TabStrip{TItem}"/> window: the item together with its
 /// signed offset from the current item (<c>Current</c> = 0, its forward neighbour = +1, two back = −2…).
 /// The offset is tagged at materialisation so a tapped cell already knows its distance and direction —
 /// the control never needs equality, an index, or a count on <typeparamref name="TItem"/>.
 /// </summary>
-public readonly record struct PagerCell<TItem>(TItem Item, int Offset) where TItem : struct;
+public readonly record struct StripCell<TItem>(TItem Item, int Offset) where TItem : struct;
 
 /// <summary>
 /// Pure, MauiReactor-free windowing over a navigable sequence (<c>Selected</c> + <c>Next</c>/<c>Prev</c>).
 /// Steps the delegates out from the selected item, stopping at a <see langword="null"/> neighbour
-/// (a finite edge — symmetric: a bound may exist forward, backward, both, or neither). Unit-tested in
-/// <c>Mobiorum.Material3.Tests</c>; see <c>docs/adr/0002-strip-pager.md</c>.
+/// (a finite edge — symmetric: a bound may exist forward, backward, both, or neither). Feeds the
+/// <see cref="TabStrip{TItem}"/> sliding window; unit-tested in <c>Mobiorum.Material3.Tests</c>. See
+/// <c>docs/adr/0003-tabbed-page-view.md</c>.
 /// </summary>
-public static class PagerWindow
+public static class StripWindow
 {
     /// <summary>
     /// Materialise strip cells centred on <paramref name="selected"/>, up to <paramref name="radius"/>
@@ -22,7 +23,7 @@ public static class PagerWindow
     /// <see langword="null"/>. Cells are returned in display order (most-negative offset first); the
     /// current cell (offset 0) is always present.
     /// </summary>
-    public static IReadOnlyList<PagerCell<TItem>> Strip<TItem>(
+    public static IReadOnlyList<StripCell<TItem>> Strip<TItem>(
         TItem selected, Func<TItem, TItem?> next, Func<TItem, TItem?> prev, int radius)
         where TItem : struct
         => StripRange(selected, next, prev, -radius, radius);
@@ -34,14 +35,14 @@ public static class PagerWindow
     /// Cells are returned in display order (most-negative offset first). Used to <em>grow</em> the strip window
     /// as it is browsed past its current edge, so a browse loads more cells without a selection change.
     /// </summary>
-    public static IReadOnlyList<PagerCell<TItem>> StripRange<TItem>(
+    public static IReadOnlyList<StripCell<TItem>> StripRange<TItem>(
         TItem selected, Func<TItem, TItem?> next, Func<TItem, TItem?> prev, int lo, int hi)
         where TItem : struct
     {
-        var cells = new List<PagerCell<TItem>>();
+        var cells = new List<StripCell<TItem>>();
         if (lo <= 0 && 0 <= hi)
         {
-            cells.Add(new PagerCell<TItem>(selected, 0));
+            cells.Add(new StripCell<TItem>(selected, 0));
         }
 
         var cursor = (TItem?)selected;
@@ -55,7 +56,7 @@ public static class PagerWindow
 
             if (offset >= lo)
             {
-                cells.Add(new PagerCell<TItem>(forward, offset));
+                cells.Add(new StripCell<TItem>(forward, offset));
             }
         }
 
@@ -70,19 +71,10 @@ public static class PagerWindow
 
             if (offset <= hi)
             {
-                cells.Insert(0, new PagerCell<TItem>(backward, offset));
+                cells.Insert(0, new StripCell<TItem>(backward, offset));
             }
         }
 
         return cells;
     }
-
-    /// <summary>
-    /// The three pager bodies to render. <c>Prev</c>/<c>Next</c> are <see langword="null"/> at a finite
-    /// edge (the drag in that direction rubber-bands rather than commits).
-    /// </summary>
-    public static (TItem? Prev, TItem Current, TItem? Next) Pages<TItem>(
-        TItem selected, Func<TItem, TItem?> next, Func<TItem, TItem?> prev)
-        where TItem : struct
-        => (prev(selected), selected, next(selected));
 }

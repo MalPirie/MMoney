@@ -10,16 +10,16 @@
 
   <ItemGroup>
     <!--
-      The pager/tab geometry seams (Controls\Pager\*.cs, Controls\Tabs\StripLayout.cs) are deliberately
+      The tab geometry seams (Controls\Tabs\StripLayout.cs, Controls\Tabs\StripWindow.cs) are deliberately
       MauiReactor-free. Link-compiling those source files here lets the tests run headlessly on plain net10.0
       with no MAUI workload or device, while still exercising the real source. MAUI-dependent code — the
-      Component (Controls\StripPager.cs, Controls\TabStrip.cs) and the platform touch seam
-      (Controls\Tabs\TouchDownView.cs) — lives elsewhere and is intentionally not linked (hence StripLayout.cs
-      is named explicitly rather than globbing Tabs\*.cs).
-      See docs/adr/0002-strip-pager.md and docs/adr/0003-tabbed-page-view.md.
+      Component (Controls\TabStrip.cs, Controls\TabbedPageView.cs) and the platform seams
+      (Controls\Tabs\TouchDownView.cs, Controls\Tabs\CarouselSettleObserver.cs) — lives elsewhere and is
+      intentionally not linked (hence the files are named explicitly rather than globbing Tabs\*.cs).
+      See docs/adr/0003-tabbed-page-view.md.
     -->
-    <Compile Include="..\Mobiorum.Material3\Controls\Pager\*.cs" LinkBase="Pager" />
     <Compile Include="..\Mobiorum.Material3\Controls\Tabs\StripLayout.cs" LinkBase="Tabs" />
+    <Compile Include="..\Mobiorum.Material3\Controls\Tabs\StripWindow.cs" LinkBase="Tabs" />
   </ItemGroup>
 
   <ItemGroup>
