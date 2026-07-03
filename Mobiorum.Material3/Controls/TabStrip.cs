@@ -190,6 +190,13 @@ public sealed partial class TabStrip<TItem> : Component<TabStripState<TItem>>
             SetState(s => { s.FlingActive = false; s.StretchSettling = false; s.Selecting = false; s.SelectRunning = false; });
         }
 
+        // A body fling is tracking: keep the window materialised ahead of the tracked position so the underscore can
+        // follow across page after page rather than sticking at the window edge and jumping when the commit lands.
+        if (_track is double trackFraction && State.Seeded)
+        {
+            EnsureTrackWindow(trackFraction);
+        }
+
         // The two prop-driven resting transitions: a selection change (glide / snap / reseed, per the resolver's
         // read of was-tracking + measurement), or a drag that ended without committing (re-pin the scroll). Both
         // resolve to a pure decision and apply it. Guarded by Seeded so the initial mount doesn't act before the seed.
@@ -271,11 +278,15 @@ public sealed partial class TabStrip<TItem> : Component<TabStripState<TItem>>
                 SeedWindow(_selected);        // re-centre a fresh, small window on the selection …
                 State.PendingCentre = true;   // … and let TryInitialCentre snap it once those few tabs measure
                 SetState(s => { s.Live = 0; s.TapFade = 0; s.Selecting = false; s.SelectRunning = false; });
+                TryInitialCentre();           // … OR centre right now if the reseeded tabs are ALREADY measured
+                                              // (reseeding into a recently-visited region fires no OnSizeChanged, so
+                                              // waiting on one would leave the selection stuck off-screen at a stale scroll).
                 break;
 
             case StripTransition.Defer:
                 State.PendingCentre = true;    // in-window but unmeasured: centre-on-measure without moving the window
                 SetState(s => { s.Live = 0; s.TapFade = 0; s.Selecting = false; s.SelectRunning = false; });
+                TryInitialCentre();            // self-gates: no-op while unmeasured, centres the moment it can
                 break;
 
             case StripTransition.None:
@@ -384,14 +395,33 @@ public sealed partial class TabStrip<TItem> : Component<TabStripState<TItem>>
                 var known = State.Widths.TryGetValue(item, out var prev);
                 if (!known || Math.Abs(prev - s.Width) > 0.5)
                 {
+                    // The width this tab CONTRIBUTED to the last layout: its old measured width, or — for a first
+                    // measure — the estimate Layout() used for it (NOT 0). The rebase below must cancel that, so it
+                    // reads the estimate before State.Widths is mutated.
+                    var baseline = prev > 0 ? prev : EstimatedTabWidth();
                     State.Widths[item] = s.Width;
                     if (State.PendingCentre)
                     {
-                        TryInitialCentre(); // snap the selected tab to centre once its geometry has measured
+                        TryInitialCentre(); // snap the selected tab to centre once the viewport has measured
                     }
                     else if (item.Equals(_selected))
                     {
                         SetState(_ => { }); // first measure of the selected tab: re-render so the underscore appears
+                    }
+                    else
+                    {
+                        // A tab BEFORE the selection changed width (a slid-in front tab measuring up from the estimate,
+                        // or a re-measure). That shifts the selected tab's ContentLeft by (width − baseline), so rebase
+                        // Committed by that delta to keep the selected tab — and its underscore, which rides ContentLeft
+                        // — visually put. Because the baseline is the estimate (not 0), the delta is now small and no
+                        // longer shoves earlier tabs off-screen before they can measure.
+                        var selIdx = State.Window.IndexOf(_selected);
+                        var itemIdx = State.Window.IndexOf(item);
+                        if (selIdx >= 0 && itemIdx >= 0 && itemIdx < selIdx)
+                        {
+                            var delta = s.Width - baseline;
+                            SetState(sx => sx.Committed -= delta);
+                        }
                     }
                 }
             })
@@ -490,13 +520,17 @@ public sealed partial class TabStrip<TItem> : Component<TabStripState<TItem>>
 
     // ---- pure-seam access --------------------------------------------------------------------------------
 
-    // The StripLayout view over the current window, with the scroll clamped to its edge-aware bounds.
+    // The StripLayout view over the current window, with the scroll clamped to its edge-aware bounds. Unmeasured
+    // tabs are filled with an ESTIMATE, not 0: a tab scrolled off the left edge may never fire OnSizeChanged, and a
+    // zero there would short ContentLeft and strand the underscore a whole tab off the selection. The estimate keeps
+    // the geometry approximately right and is replaced by the exact width the instant the tab comes on-screen.
     private StripLayout Layout()
     {
+        var est = EstimatedTabWidth();
         var widths = new double[State.Window.Count];
         for (var i = 0; i < State.Window.Count; i++)
         {
-            widths[i] = State.Widths.TryGetValue(State.Window[i], out var w) ? w : 0;
+            widths[i] = EffectiveWidth(State.Window[i], est);
         }
 
         var hasBack = State.Window.Count > 0 && _prev(State.Window[0]) is null;
@@ -506,9 +540,37 @@ public sealed partial class TabStrip<TItem> : Component<TabStripState<TItem>>
         return probe with { Scroll = probe.Clamp(raw) };
     }
 
-    // The lockstep override while the body is being dragged: lerp the scroll-centre and the underscore geometry
-    // between the selected tab and the neighbour the drag heads toward, by |fraction|. Null when not tracking (or
-    // the selected tab isn't materialised) — the strip then uses its normal rest/selection geometry.
+    // A tab's width as the geometry sees it: the measured width, or — for a not-yet-measured (off-screen) tab — the
+    // estimate. This ONE definition must be used everywhere geometry depends on width (the layout AND the window
+    // slide's re-anchor), or ContentLeft and the rebase disagree and a slide shoves the selection off-screen.
+    private double EffectiveWidth(TItem item, double est) =>
+        State.Widths.TryGetValue(item, out var w) && w > 0 ? w : est;
+
+    // The placeholder width for a not-yet-measured tab: the mean of the widths measured so far (a sensible label
+    // default before anything has measured). Only ever used for off-screen tabs — every on-screen tab measures — so
+    // the small estimate error is invisible and is corrected the moment the tab scrolls into view.
+    private double EstimatedTabWidth()
+    {
+        var sum = 0.0;
+        var count = 0;
+        foreach (var w in State.Widths.Values)
+        {
+            if (w > 0)
+            {
+                sum += w;
+                count++;
+            }
+        }
+
+        return count > 0 ? sum / count : 75;
+    }
+
+    // The lockstep override while the body is being dragged/flung: place the scroll-centre and the underscore at the
+    // body's CONTINUOUS position, `selectedIndex + fraction`, by lerping between the two tabs that position falls
+    // between. The fraction is unclamped, so a multi-page fling walks the underscore across every tab it crosses (not
+    // just the immediate neighbour) — the two bracketing tabs are clamped to the materialised window, so if a fling
+    // outruns the window the underscore rides its edge until the settle commits. Null when not tracking (or the
+    // selected tab isn't materialised) — the strip then uses its normal rest/selection geometry.
     private (double Scroll, double Ix, double Iw)? TrackView(StripLayout layout)
     {
         if (_track is not { } f)
@@ -522,17 +584,17 @@ public sealed partial class TabStrip<TItem> : Component<TabStripState<TItem>>
             return null;
         }
 
-        var neighbour = Math.Clamp(index + (f >= 0 ? 1 : -1), 0, State.Window.Count - 1);
-        var t = Math.Min(1, Math.Abs(f));
-        var (fx, fw) = layout.IndicatorGeometry(index, TabHPad);
-        var (tx, tw) = layout.IndicatorGeometry(neighbour, TabHPad);
-        var fromCentre = layout.CentreOffset(index);
-        var scroll = fromCentre + (layout.CentreOffset(neighbour) - fromCentre) * t;
+        var count = State.Window.Count;
+        var target = index + f;                                       // continuous position in window space
+        var lo = Math.Clamp((int)Math.Floor(target), 0, count - 1);   // the tab at or before it …
+        var hi = Math.Clamp(lo + 1, 0, count - 1);                    // … and the next one
+        var t = Math.Clamp(target - lo, 0, 1);                        // fractional part (0 at lo, 1 at hi)
 
-        // Never lerp the underscore width toward an unmeasured neighbour (tw == 0) — that collapses it to nothing
-        // mid-swipe and it vanishes. Hold the current tab's width until the neighbour has a real measurement.
-        var iw = tw > 0 ? fw + (tw - fw) * t : fw;
-        return (layout.Clamp(scroll), fx + (tx - fx) * t, iw);
+        var (loX, loW) = layout.IndicatorGeometry(lo, TabHPad);
+        var (hiX, hiW) = layout.IndicatorGeometry(hi, TabHPad);
+        var loCentre = layout.CentreOffset(lo);
+        var scroll = loCentre + (layout.CentreOffset(hi) - loCentre) * t;
+        return (layout.Clamp(scroll), loX + (hiX - loX) * t, loW + (hiW - loW) * t);
     }
 
     private static double StretchDelta(double excess) => MaxStretch * excess / (excess + StretchScale);
@@ -550,13 +612,48 @@ public sealed partial class TabStrip<TItem> : Component<TabStripState<TItem>>
         }
     }
 
+    // Keep the window materialised ahead of a live body fling. Grows ONLY (no eviction): an append never shifts an
+    // index, and a prepend shifts every index right — including the selection's, which we advance in step so the
+    // tracked position `index + fraction` keeps pointing at the same tab and the visual stays put (ContentLeft and the
+    // track-scroll both shift by the prepend width). Eviction back to the cap is left to the post-commit MaybeSlide,
+    // so nothing churns indices mid-follow. Bounded by the fling distance and the real sequence edges.
+    private void EnsureTrackWindow(double fraction)
+    {
+        var index = State.Window.IndexOf(_selected);
+        if (index < 0)
+        {
+            return;
+        }
+
+        const int margin = 4; // keep this many tabs materialised beyond the tracked position
+        var grew = false;
+
+        while (index + fraction > State.Window.Count - 1 - margin && _next(State.Window[^1]) is { } n)
+        {
+            State.Window.Add(n);
+            grew = true;
+        }
+
+        while (index + fraction < margin && _prev(State.Window[0]) is { } p)
+        {
+            State.Window.Insert(0, p);
+            index++; // the selection (and every tab) shifted one to the right
+            grew = true;
+        }
+
+        if (grew)
+        {
+            SetState(_ => { });
+        }
+    }
+
     // Snap the selected tab to centre on first load, once the viewport and every tab up to (and including) the
     // selected one have measured (CentreOffset needs those widths). No animation — it is the resting position.
     private void TryInitialCentre()
     {
         if (State.ViewportWidth <= 0)
         {
-            return;
+            return; // the viewport hasn't measured yet — CentreOffset needs it; wait for the strip's OnSizeChanged
         }
 
         var idx = State.Window.IndexOf(_selected);
@@ -565,14 +662,9 @@ public sealed partial class TabStrip<TItem> : Component<TabStripState<TItem>>
             return;
         }
 
-        for (var i = 0; i <= idx; i++)
-        {
-            if (!State.Widths.TryGetValue(State.Window[i], out var w) || w <= 0)
-            {
-                return; // a width the centre depends on has not measured yet — wait for the next OnSizeChanged
-            }
-        }
-
+        // Centre off the estimate-filled layout: it no longer waits for every intervening tab to have measured (an
+        // off-screen one may never), so a reseed or settle can't leave the selection stranded off-screen. On-screen
+        // tabs measure immediately and their exact widths refine the centre via the rebase in OnSizeChanged.
         var centre = Layout().CentreOffset(idx);
         State.PendingCentre = false;
         SetState(s => s.Committed = centre);
@@ -597,12 +689,13 @@ public sealed partial class TabStrip<TItem> : Component<TabStripState<TItem>>
         }
         else if (need == SlideNeed.GrowFront)
         {
+            var est = EstimatedTabWidth();
             var first = State.Window[0];
             var added = 0.0;
             for (var i = 0; i < GrowChunk && _prev(first) is { } p; i++)
             {
                 State.Window.Insert(0, p);
-                added += State.Widths.TryGetValue(p, out var w) ? w : 0; // usually 0 (unmeasured) — settles off-screen
+                added += EffectiveWidth(p, est) + SpacingDip; // the width (or estimate) the layout now counts for it
                 first = p;
             }
 
@@ -622,11 +715,12 @@ public sealed partial class TabStrip<TItem> : Component<TabStripState<TItem>>
 
     private void EvictFront()
     {
+        var est = EstimatedTabWidth();
         var cap = 2 * WindowRadius + GrowChunk;
         var removed = 0.0;
         while (State.Window.Count > cap)
         {
-            removed += State.Widths.TryGetValue(State.Window[0], out var w) ? w + SpacingDip : 0;
+            removed += EffectiveWidth(State.Window[0], est) + SpacingDip; // same width the layout counted for it
             State.Window.RemoveAt(0);
         }
 

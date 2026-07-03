@@ -160,12 +160,14 @@ public sealed partial class TabbedPageView<TItem> : Component<TabbedPageViewStat
         // Re-register every render so the callbacks always target this (possibly rebuilt) instance.
         CarouselSettleObserver.Register(State.CarouselId!, OnBodySettled, OnBodyScrolled);
 
-        // Lockstep fraction for the strip: how far the body has dragged from the selected page toward a neighbour,
-        // in page units (clamped ±1 — the body only ever moves one page per gesture). Null when no drag is active,
-        // and naturally ~0 the instant the selection commits (BodyPos ≈ the settled index == index of the new
-        // selection), so the strip adopts the tracked position without a second glide.
+        // Lockstep fraction for the strip: how far the body has scrolled from the selected page, in signed page
+        // units. NOT clamped to ±1 — a fast fling crosses several pages before it settles, and the strip follows it
+        // across all of them (the strip's TrackView brackets whatever two tabs the position falls between) instead
+        // of freezing at the immediate neighbour until the commit lands. Null when no drag is active, and naturally
+        // ~0 the instant the selection commits (BodyPos ≈ the settled index == the new selection's index), so the
+        // strip adopts the tracked position without a second glide.
         double? track = State.BodyPos is double pos
-            ? Math.Clamp(pos - State.Buffer.IndexOf(_selected), -1, 1)
+            ? pos - State.Buffer.IndexOf(_selected)
             : null;
 
         return Grid("Auto,*", "*",
