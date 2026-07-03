@@ -1,4 +1,5 @@
 <Solution>
+  <Project Path="MMoney.App.Tests/MMoney.App.Tests.csproj" />
   <Project Path="MMoney.App/MMoney.App.csproj">
     <Deploy Solution="Debug|*" />
   </Project>

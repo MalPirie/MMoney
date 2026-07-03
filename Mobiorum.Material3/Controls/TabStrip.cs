@@ -314,7 +314,7 @@ public sealed partial class TabStrip<TItem> : Component<TabStripState<TItem>>
                     HomeButton(scheme, home).GridColumn(0),
                     Viewport(scheme).GridColumn(1)
                 )
-                .BackgroundColor(scheme.SurfaceVariant)
+                .BackgroundColor(scheme.Surface) // M3 tabs sit on a Surface container
                 .HeightRequest(StripHeight)
                 .OnSizeChanged((Size s) => State.StripWidth = s.Width);
         }
@@ -338,7 +338,7 @@ public sealed partial class TabStrip<TItem> : Component<TabStripState<TItem>>
             StretchController(),
             SelectController()
         )
-        .BackgroundColor(scheme.SurfaceVariant)
+        .BackgroundColor(scheme.Surface) // M3 tabs sit on a Surface container
         .IsClippedToBounds(true)
         .ScaleX(State.Stretch)
         .AnchorX(State.StretchAnchor)

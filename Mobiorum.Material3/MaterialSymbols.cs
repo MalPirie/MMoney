@@ -16,4 +16,7 @@ public static class MaterialSymbols
     public static readonly string ChevronLeft = char.ConvertFromUtf32(0xE5CB);  // chevron_left
     public static readonly string ChevronRight = char.ConvertFromUtf32(0xE5CC); // chevron_right
     public static readonly string Home = char.ConvertFromUtf32(0xE88A);         // home (TabStrip Home button default)
+    public static readonly string CalendarMonth = char.ConvertFromUtf32(0xEBCC); // calendar_month
+    public static readonly string Event = char.ConvertFromUtf32(0xE878);         // event (calendar with a single date)
+    public static readonly string Today = char.ConvertFromUtf32(0xE8DF);         // today (calendar with the current date)
 }
