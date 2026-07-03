@@ -1,14 +1,11 @@
 namespace MMoney.Core;
 
 /// <summary>Uniquely identifies a transaction by its date and a per-account sequence number.</summary>
-public record struct TransactionId(DateOnly Date, int Sequence) : IComparable<TransactionId>
+/// <param name="Date">The date on which the transaction occurred.</param>
+/// <param name="Sequence">A 1-based sequence number incremented per account for each new transaction
+/// (0 is reserved for the "Balance carried" opening entry).</param>
+public readonly record struct TransactionId(DateOnly Date, int Sequence) : IComparable<TransactionId>
 {
-    /// <summary>The date on which the transaction occurred.</summary>
-    public DateOnly Date { get; set; } = Date;
-
-    /// <summary>A 1-based sequence number incremented by account for each new transaction.</summary>
-    public int Sequence { get; set; } = Sequence;
-
     /// <summary>Compares first by date, then by sequence number.</summary>
     public int CompareTo(TransactionId other) =>
         Date != other.Date

@@ -6,8 +6,12 @@ namespace MMoney.Core;
 [JsonConverter(typeof(MonthOnlyJsonConverter))]
 public readonly record struct MonthOnly(int Year, int Month) : IComparable<MonthOnly>
 {
+    /// <summary>
+    /// The sentinel "no month" value. Note it is also <c>default(MonthOnly)</c> (Year 0, Month 0), so an
+    /// uninitialised <see cref="MonthOnly"/> reads as <see cref="Undefined"/>; the day/arithmetic members throw on
+    /// it rather than producing a garbage date, so misuse fails loudly and locally instead of silently.
+    /// </summary>
     public static readonly MonthOnly Undefined = new();
-    public static readonly MonthOnly MaxValue = new(int.MaxValue, 12);
 
     /// <summary>The calendar year.</summary>
     public int Year { get; } = Year;
@@ -16,14 +20,14 @@ public readonly record struct MonthOnly(int Year, int Month) : IComparable<Month
     public int Month { get; } = Month;
 
     /// <summary>The first day of the month.</summary>
-    public DateOnly FirstDay => this != Undefined 
-        ? new(Year, Month, 1) 
-        : throw new InvalidOperationException();
+    public DateOnly FirstDay => this != Undefined
+        ? new(Year, Month, 1)
+        : throw new InvalidOperationException("FirstDay is undefined for the default (Undefined) month.");
 
     /// <summary>The last day of the month, accounting for month length and leap years.</summary>
-    public DateOnly LastDay => this != Undefined 
-        ? new(Year, Month, DateTime.DaysInMonth(Year, Month)) 
-        : throw new InvalidOperationException();
+    public DateOnly LastDay => this != Undefined
+        ? new(Year, Month, DateTime.DaysInMonth(Year, Month))
+        : throw new InvalidOperationException("LastDay is undefined for the default (Undefined) month.");
 
     /// <summary>Compares this month to another, ordering by year then month.</summary>
     public int CompareTo(MonthOnly other) =>
@@ -37,7 +41,7 @@ public readonly record struct MonthOnly(int Year, int Month) : IComparable<Month
     {
         if (this == Undefined)
         {
-            throw new InvalidOperationException();
+            throw new InvalidOperationException("Cannot add months to the default (Undefined) month.");
         }
 
         var totalMonths = Year * 12 + Month - 1 + months;
@@ -54,7 +58,7 @@ public readonly record struct MonthOnly(int Year, int Month) : IComparable<Month
     {
         if (this == Undefined)
         {
-            throw new InvalidOperationException();
+            throw new InvalidOperationException("Cannot range from the default (Undefined) month.");
         }
 
         for (var month = this; month.CompareTo(end) <= 0; month = month.Add(1))
