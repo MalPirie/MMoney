@@ -60,14 +60,8 @@ public sealed class AccountManager
             return;
         }
 
-        foreach (var account in accounts)
-        {
-            account.NewEvent -= OnNewEvent;
-        }
-
+        UntrackAll();
         ignoreMonthClosed = value;
-
-        accounts.Clear();
         LoadAccounts();
     }
 
@@ -81,15 +75,14 @@ public sealed class AccountManager
         ThrowIfNotDeleted(id);
 
         var account = persistenceService.RestoreAccount(id, ignoreMonthClosed);
-        account.NewEvent += OnNewEvent;
 
+        // Compute the unique name before tracking, so MakeUniqueName does not see the account conflict with itself.
         var uniqueName = MakeUniqueName(account.Name);
+        Track(account);
         if (!string.Equals(uniqueName, account.Name, StringComparison.OrdinalIgnoreCase))
         {
             account.SetName(uniqueName);
         }
-
-        accounts.Add(account);
 
         return account;
     }
@@ -106,8 +99,7 @@ public sealed class AccountManager
         ThrowIfDuplicateName(name);
 
         var account = new Account(Guid.NewGuid(), []);
-        account.NewEvent += OnNewEvent;
-        accounts.Add(account);
+        Track(account);
         account.SetName(name);
         return account;
     }
@@ -120,12 +112,11 @@ public sealed class AccountManager
     {
         ArgumentNullException.ThrowIfNull(account);
 
-        if (!accounts.Remove(account))
+        if (!Untrack(account))
         {
             return false;
         }
 
-        account.NewEvent -= OnNewEvent;
         persistenceService.MarkAccountAsDeleted(account);
         return true;
     }
@@ -147,9 +138,11 @@ public sealed class AccountManager
         var index = accounts.IndexOf(target);
         if (index >= 0)
         {
-            target.NewEvent -= OnNewEvent;
-            reloaded.NewEvent += OnNewEvent;
-            accounts[index] = reloaded;
+            Replace(index, target, reloaded); // in-place: keep the managed list position
+        }
+        else
+        {
+            Track(reloaded); // off-list target: adopt the reloaded account — leaving it unwired was the bug
         }
 
         return reloaded;
@@ -161,6 +154,46 @@ public sealed class AccountManager
         {
             persistenceService.Save(account, e);
         }
+    }
+
+    // The only places an account's persistence subscription is touched. Each fuses the subscription to list
+    // membership, so the invariant "a managed account (in `accounts`) is subscribed to Save exactly once, and an
+    // unmanaged one is not" holds by construction — no caller maintains the pair by hand. No `NewEvent +=/-=`
+    // appears outside these four.
+
+    private void Track(Account account)
+    {
+        account.NewEvent += OnNewEvent;
+        accounts.Add(account);
+    }
+
+    private bool Untrack(Account account)
+    {
+        if (!accounts.Remove(account))
+        {
+            return false;
+        }
+
+        account.NewEvent -= OnNewEvent;
+        return true;
+    }
+
+    private void UntrackAll()
+    {
+        foreach (var account in accounts)
+        {
+            account.NewEvent -= OnNewEvent;
+        }
+
+        accounts.Clear();
+    }
+
+    // Swap a managed account for its reloaded replacement in place, keeping its list position.
+    private void Replace(int index, Account old, Account fresh)
+    {
+        old.NewEvent -= OnNewEvent;
+        fresh.NewEvent += OnNewEvent;
+        accounts[index] = fresh;
     }
 
     private void ThrowIfDuplicateName(string name)
@@ -181,10 +214,9 @@ public sealed class AccountManager
 
     private void LoadAccounts()
     {
-        accounts.AddRange(persistenceService.LoadAccounts(ignoreMonthClosed));
-        foreach (var account in accounts)
+        foreach (var account in persistenceService.LoadAccounts(ignoreMonthClosed))
         {
-            account.NewEvent += OnNewEvent;
+            Track(account);
         }
 
         if (accounts.Count == 0)

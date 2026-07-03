@@ -124,4 +124,26 @@ public class AccountManagerTests
         Assert.Equal(80m, imported.BalanceOn(D(2026, 1, 31)));
         Assert.Contains(manager.GetAccounts(), a => a.Id == target.Id && a.Name == "Source");
     }
+
+    [Fact]
+    public void ImportAccount_OffListTarget_AdoptsAndWiresTheReloadedAccount()
+    {
+        var fileSystem = new MockFileSystem();
+        var manager = NewManager(fileSystem);
+        var source = manager.AddAccount("Source");
+        source.AddTransaction(D(2026, 1, 5), 80m, "x");
+        var exported = manager.ExportAccount(source).ToList();
+
+        // A target this manager does not hold — the previously-unwired branch.
+        var foreign = new Account(Guid.NewGuid(), []);
+        var imported = manager.ImportAccount(foreign, exported);
+
+        // Adopted into management...
+        Assert.Contains(manager.GetAccounts(), a => ReferenceEquals(a, imported));
+
+        // ...and wired: a later event on it persists and survives a fresh-manager reload.
+        imported.AddTransaction(D(2026, 2, 1), 20m, "y");
+        var reloaded = NewManager(fileSystem).GetAccounts().Single(a => a.Id == imported.Id);
+        Assert.Equal(100m, reloaded.BalanceOn(D(2026, 2, 28)));
+    }
 }
