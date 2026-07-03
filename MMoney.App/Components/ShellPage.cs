@@ -3,17 +3,16 @@ using System.Linq;
 using Microsoft.Maui.ApplicationModel;
 using Microsoft.Maui.Storage;
 using Mobiorum.Material3;
-using MMoney.App.Components.Sandbox;
 using MMoney.Core;
 
 namespace MMoney.App.Components;
 
 internal sealed class ShellState
 {
-    /// <summary>Selected destination: 0 = Transactions, 1 = Repeating, 2 = Sandbox (dev-only, ADR-0003 spike).</summary>
+    /// <summary>Selected destination: 0 = Transactions, 1 = Repeating.</summary>
     public int Tab { get; set; }
 
-    /// <summary>The month shown by the Transactions strip + pager (demonstrator state).</summary>
+    /// <summary>The month shown by the Transactions TabbedPageView (demonstrator state).</summary>
     public MonthOnly Month { get; set; }
 }
 
@@ -79,20 +78,8 @@ partial class ShellPage : Component<ShellState>
     private VisualNode RenderCentral(MaterialScheme scheme) => State.Tab switch
     {
         0 => RenderTransactions(scheme),
-        1 => RenderRepeating(scheme),
-        2 => RenderSandbox(),
-        _ => RenderPagedSandbox(),
+        _ => RenderRepeating(scheme),
     };
-
-    // Dev-only: hosts the real TabStrip (ADR-0003) for on-device validation, page area absent. Remove with the
-    // Sandbox nav destination once TabStrip is proven on device.
-    private static VisualNode RenderSandbox() =>
-        new TabStripSandbox().WithKey("tabstrip-sandbox");
-
-    // Dev-only: hosts the TabbedPageView composite (TabStrip + swipeable CarouselView body) for on-device
-    // validation. Remove with the Paged nav destination once TabbedPageView is proven on device.
-    private static VisualNode RenderPagedSandbox() =>
-        new TabbedPageViewSandbox().WithKey("tabbedpageview-sandbox");
 
     // Transactions tab: the generic TabbedPageView (strip + swipeable CarouselView body) driven by a self-contained
     // MonthOnly sequence (open-ended forward, bounded back at the placeholder EditLock — Prev returns null at the
@@ -151,14 +138,7 @@ partial class ShellPage : Component<ShellState>
                     .OnSelected(() => SetState(s => s.Tab = 0)),
                 new NavDestination(MaterialSymbols.Repeat, "Repeating")
                     .Selected(State.Tab == 1)
-                    .OnSelected(() => SetState(s => s.Tab = 1)),
-                // Dev-only destinations for ADR-0003: the TabStrip alone, and the TabbedPageView composite.
-                new NavDestination(MaterialSymbols.ChevronRight, "Sandbox")
-                    .Selected(State.Tab == 2)
-                    .OnSelected(() => SetState(s => s.Tab = 2)),
-                new NavDestination(MaterialSymbols.List, "Paged")
-                    .Selected(State.Tab == 3)
-                    .OnSelected(() => SetState(s => s.Tab = 3))
+                    .OnSelected(() => SetState(s => s.Tab = 1))
             ])
             .Arrangement(NavArrangement.Start);
 
