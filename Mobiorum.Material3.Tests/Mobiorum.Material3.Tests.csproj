@@ -10,17 +10,18 @@
 
   <ItemGroup>
     <!--
-      The tab seams (Controls\Tabs\StripLayout.cs, StripWindow.cs, StripTransition.cs) are deliberately
-      MauiReactor-free. Link-compiling those source files here lets the tests run headlessly on plain net10.0
-      with no MAUI workload or device, while still exercising the real source. MAUI-dependent code — the
-      Component (Controls\TabStrip.cs, Controls\TabbedPageView.cs) and the platform seams
-      (Controls\Tabs\TouchDownView.cs, Controls\Tabs\CarouselSettleObserver.cs) — lives elsewhere and is
-      intentionally not linked (hence the files are named explicitly rather than globbing Tabs\*.cs).
+      The tab seams (Controls\Tabs\StripLayout.cs, StripWindow.cs, StripTransition.cs, CarouselSettle.cs) are
+      deliberately MauiReactor- and Android-free. Link-compiling those source files here lets the tests run
+      headlessly on plain net10.0 with no MAUI workload or device, while still exercising the real source. Platform-
+      dependent code — the Component (Controls\TabStrip.cs, Controls\TabbedPageView.cs) and the platform seams
+      (Controls\Tabs\TouchDownView.cs, and the Android SettleListener adapter in Controls\Tabs\CarouselSettleObserver.cs)
+      — lives elsewhere and is intentionally not linked (hence the files are named explicitly, not globbed).
       See docs/adr/0003-tabbed-page-view.md.
     -->
     <Compile Include="..\Mobiorum.Material3\Controls\Tabs\StripLayout.cs" LinkBase="Tabs" />
     <Compile Include="..\Mobiorum.Material3\Controls\Tabs\StripWindow.cs" LinkBase="Tabs" />
     <Compile Include="..\Mobiorum.Material3\Controls\Tabs\StripTransition.cs" LinkBase="Tabs" />
+    <Compile Include="..\Mobiorum.Material3\Controls\Tabs\CarouselSettle.cs" LinkBase="Tabs" />
   </ItemGroup>
 
   <ItemGroup>

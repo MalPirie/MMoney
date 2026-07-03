@@ -422,6 +422,18 @@ that *contains* a `TabStrip`, not a reimplementation.
   release left the body straddling two pages it drives `SmoothScrollToPosition(nearest)` and waits for the clean
   idle. So the tab changes exactly once, at the point of no return. Tab tap → `Selected` → the body's `Position`
   is set to that item.
+  - **Pure kernel behind the native adapter: `CarouselSettle` (added 2026-07-03).** The seam's *arithmetic* — the
+    continuous drag position (`first + −left/width`, matching `ViewPager2.onPageScrolled`) and the idle decision
+    (completely-visible ⇒ commit; straddle ⇒ snap to the nearest page; nothing laid out ⇒ ignore) — was written
+    directly in `RecyclerView`/`child.Left`/`child.Width` terms behind `#if ANDROID`, so it could not be link-
+    compiled into the headless tests and had **zero coverage** despite being the device-tuned, bug-historied core.
+    It is now a pure, Android-free `CarouselSettle` (in `Controls/Tabs/`, link-compiled and unit-tested like
+    `StripLayout`) returning a `SettleOutcome { Commit / Snap / Ignore }` DU — the same decision-then-thin-adapter
+    shape as `StripTransition`, so both native resolvers read alike. `SettleListener` stays the adapter: it reads
+    the RecyclerView, holds the stateful `_userDrag` latch, and *applies* the outcome (`Commit` reports up and ends
+    the gesture; `Snap` drives `SmoothScrollToPosition`; `Ignore` waits). Behaviour is preserved exactly. The two
+    string-keyed callback registries (settle + live-drag) were also unified into one `Register(id, onSettled,
+    onScrolled)` + a `CarouselCallbacks` record, removing the half-registered failure mode.
 
 - **Coupled drag-lock (strip tracks the body's live drag 1:1) — DONE, device-validated 2026-07-03.** The
   "panning lock". **Body-drives-strip only** (strip drag stays free-scroll + tap). The settle seam supplies the

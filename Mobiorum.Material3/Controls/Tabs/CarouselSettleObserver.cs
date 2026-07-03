@@ -30,26 +30,21 @@ namespace Mobiorum.Material3;
 /// </summary>
 internal static class CarouselSettleObserver
 {
-    // AutomationId → "the carousel settled on this index". Plain managed state, safe on every platform.
-    private static readonly Dictionary<string, Action<int>> Callbacks = new();
+    // AutomationId → its owner's paired settle + live-drag handlers. One entry per carousel, so a caller cannot
+    // half-register (settle without scroll, or vice versa). Plain managed state, safe on every platform.
+    private static readonly Dictionary<string, CarouselCallbacks> Callbacks = new();
 
-    // AutomationId → "the body is at this continuous page position" (fired only during a user drag).
-    private static readonly Dictionary<string, Action<double>> ScrollCallbacks = new();
+    // The settle commit ("the carousel settled on this index") and the live-drag report ("the body is at this
+    // continuous page position", fired only during a user drag), held together so registration is atomic.
+    private sealed record CarouselCallbacks(Action<int> OnSettled, Action<double> OnScrolled);
 
-    /// <summary>Point an <c>AutomationId</c> at its owner's settle handler (idempotent — re-register each render
-    /// so the callback always targets the live, possibly-rebuilt component instance).</summary>
-    public static void Register(string automationId, Action<int> onSettled) => Callbacks[automationId] = onSettled;
+    /// <summary>Point an <c>AutomationId</c> at its owner's settle + live-drag handlers (idempotent — re-register
+    /// each render so the callbacks always target the live, possibly-rebuilt component instance).</summary>
+    public static void Register(string automationId, Action<int> onSettled, Action<double> onScrolled) =>
+        Callbacks[automationId] = new CarouselCallbacks(onSettled, onScrolled);
 
-    /// <summary>Point an <c>AutomationId</c> at its owner's live-drag handler (continuous page position; idempotent,
-    /// re-registered each render like <see cref="Register"/>).</summary>
-    public static void RegisterScroll(string automationId, Action<double> onScrolled) => ScrollCallbacks[automationId] = onScrolled;
-
-    /// <summary>Drop both callbacks when the owner truly unmounts.</summary>
-    public static void Unregister(string automationId)
-    {
-        Callbacks.Remove(automationId);
-        ScrollCallbacks.Remove(automationId);
-    }
+    /// <summary>Drop the callbacks when the owner truly unmounts.</summary>
+    public static void Unregister(string automationId) => Callbacks.Remove(automationId);
 
 #if ANDROID
     // Track which RecyclerViews already carry our listener (the handler mapping runs on every update).
@@ -102,34 +97,38 @@ internal static class CarouselSettleObserver
             }
 
             // MAUI's CarouselView (old Items RecyclerView) does not reliably snap on a slow release — it can come to
-            // rest straddling two pages (no completely-visible child). If so, drive a snap to the nearest page and
-            // bail; the resulting clean idle re-enters here and commits. Only a completely-visible page is a real
-            // settle (Loop=false → adapter index == item index). Whatever page the body lands on is committed as-is
-            // — a firm drag that crosses several pages moves several pages (the strip snaps onto the landed tab).
-            var settled = layout.FindFirstCompletelyVisibleItemPosition();
-            if (settled == RecyclerView.NoPosition)
+            // rest straddling two pages (no completely-visible child). The pure CarouselSettle kernel decides: a
+            // completely-visible page is a real settle (Loop=false → adapter index == item index) and commits; a
+            // straddle drives a snap to the nearest page and the resulting clean idle re-enters here to commit;
+            // nothing laid out is ignored. Whatever page the body lands on is committed as-is — a firm drag crossing
+            // several pages moves several pages (the strip snaps onto the landed tab).
+            var completely = layout.FindFirstCompletelyVisibleItemPosition();
+            var first = layout.FindFirstVisibleItemPosition();
+            var child = first == RecyclerView.NoPosition ? null : layout.FindViewByPosition(first);
+
+            var outcome = CarouselSettle.ResolveSettle(
+                completely == RecyclerView.NoPosition ? null : completely,
+                first == RecyclerView.NoPosition ? null : first,
+                child?.Left ?? 0,
+                child?.Width ?? 0);
+
+            switch (outcome)
             {
-                var first = layout.FindFirstVisibleItemPosition();
-                if (first == RecyclerView.NoPosition || layout.FindViewByPosition(first) is not { Width: > 0 } child)
-                {
-                    return;
-                }
+                case SettleOutcome.Commit commit:
+                    _userDrag = false; // reached a real resting page — the gesture (and any snap it triggered) is complete
+                    if (TryCarouselId(out var id) && Callbacks.TryGetValue(id, out var callbacks))
+                    {
+                        callbacks.OnSettled(commit.Page);
+                    }
 
-                var nearest = -child.Left * 2 >= child.Width ? first + 1 : first;
-                recyclerView.SmoothScrollToPosition(nearest);
-                return;
-            }
+                    break;
 
-            _userDrag = false; // reached a real resting page — the gesture (and any snap it triggered) is complete
+                case SettleOutcome.Snap snap:
+                    recyclerView.SmoothScrollToPosition(snap.Page); // straddled two — drive to nearest, await the re-idle
+                    break;
 
-            if (!TryCarouselId(out var id))
-            {
-                return;
-            }
-
-            if (Callbacks.TryGetValue(id, out var onSettled))
-            {
-                onSettled(settled);
+                case SettleOutcome.Ignore:
+                    break; // nothing laid out yet — stay latched and wait for the next idle
             }
         }
 
@@ -152,12 +151,11 @@ internal static class CarouselSettleObserver
                 return;
             }
 
-            // Continuous page position: the first visible page plus how far it has scrolled off the left edge as a
-            // fraction of its width (== Android's ViewPager2.onPageScrolled position + offset).
-            var position = first + (double)(-child.Left) / child.Width;
-            if (TryCarouselId(out var id) && ScrollCallbacks.TryGetValue(id, out var onScrolled))
+            // Continuous page position (the CarouselSettle kernel owns the formula == ViewPager2.onPageScrolled).
+            var position = CarouselSettle.ContinuousPosition(first, child.Left, child.Width);
+            if (TryCarouselId(out var id) && Callbacks.TryGetValue(id, out var callbacks))
             {
-                onScrolled(position);
+                callbacks.OnScrolled(position);
             }
         }
 

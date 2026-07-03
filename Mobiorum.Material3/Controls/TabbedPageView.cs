@@ -158,8 +158,7 @@ public sealed partial class TabbedPageView<TItem> : Component<TabbedPageViewStat
         EnsureBuilt();
 
         // Re-register every render so the callbacks always target this (possibly rebuilt) instance.
-        CarouselSettleObserver.Register(State.CarouselId!, OnBodySettled);
-        CarouselSettleObserver.RegisterScroll(State.CarouselId!, OnBodyScrolled);
+        CarouselSettleObserver.Register(State.CarouselId!, OnBodySettled, OnBodyScrolled);
 
         // Lockstep fraction for the strip: how far the body has dragged from the selected page toward a neighbour,
         // in page units (clamped ±1 — the body only ever moves one page per gesture). Null when no drag is active,
