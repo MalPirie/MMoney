@@ -26,6 +26,10 @@ public sealed class TabbedPageViewState<TItem> where TItem : struct
     /// <summary>Stable <c>AutomationId</c> for the carousel, keying its scroll-settle callback. Generated once and
     /// held in State so it survives host re-renders (the callback is re-registered against it each render).</summary>
     public string? CarouselId;
+
+    /// <summary>Live continuous body page position while a user drag owns the scroll (null when not dragging). Each
+    /// render derives the strip's lockstep fraction from this, relative to the current selection.</summary>
+    public double? BodyPos;
 }
 
 /// <summary>
@@ -138,7 +142,9 @@ public sealed partial class TabbedPageView<TItem> : Component<TabbedPageViewStat
             }
             else if (idx != State.Position)
             {
-                // Adjacent tab → animate the page across; a jump of more than one → snap (no scroll-through).
+                // Adjacent tab → animate the page across; a jump of more than one → snap (best-effort; a reliable
+                // jump for a FAR tab reached after free-scrolling the strip a long way is a known gap — see the
+                // "revisit" note in memory/ADR-0003: the far tabs are unmeasured, which also skews hit-testing).
                 var animate = Math.Abs(idx - State.Position) <= 1;
                 SetState(s => { s.Position = idx; s.ScrollAnimated = animate; });
             }
@@ -150,10 +156,18 @@ public sealed partial class TabbedPageView<TItem> : Component<TabbedPageViewStat
     public override VisualNode Render()
     {
         EnsureBuilt();
-        var scheme = MaterialTheme.Current;
 
-        // Re-register every render so the settle callback always targets this (possibly rebuilt) instance.
+        // Re-register every render so the callbacks always target this (possibly rebuilt) instance.
         CarouselSettleObserver.Register(State.CarouselId!, OnBodySettled);
+        CarouselSettleObserver.RegisterScroll(State.CarouselId!, OnBodyScrolled);
+
+        // Lockstep fraction for the strip: how far the body has dragged from the selected page toward a neighbour,
+        // in page units (clamped ±1 — the body only ever moves one page per gesture). Null when no drag is active,
+        // and naturally ~0 the instant the selection commits (BodyPos ≈ the settled index == index of the new
+        // selection), so the strip adopts the tracked position without a second glide.
+        double? track = State.BodyPos is double pos
+            ? Math.Clamp(pos - State.Buffer.IndexOf(_selected), -1, 1)
+            : null;
 
         return Grid("Auto,*", "*",
             new TabStrip<TItem>()
@@ -163,6 +177,7 @@ public sealed partial class TabbedPageView<TItem> : Component<TabbedPageViewStat
                 .Label(_label)
                 .Home(_home)
                 .HomeIcon(_homeIcon)
+                .Track(track)
                 .OnSelectedChanged(OnSelectionChanged)
                 .GridRow(0),
 
@@ -185,6 +200,23 @@ public sealed partial class TabbedPageView<TItem> : Component<TabbedPageViewStat
     // A tab tap reports straight up; OnPropsChanged then moves the carousel to the new selection.
     private void OnSelectionChanged(TItem item) => _onSelectedChanged(item);
 
+    // The body is being dragged by a finger (seam-gated to user scrolls only): record the live position so the next
+    // render can feed the strip its lockstep fraction. Small deltas are ignored to avoid pointless re-renders.
+    private void OnBodyScrolled(double pos)
+    {
+        if (!State.Built)
+        {
+            return;
+        }
+
+        if (State.BodyPos is double cur && Math.Abs(cur - pos) < 0.003)
+        {
+            return;
+        }
+
+        SetState(s => s.BodyPos = pos);
+    }
+
     // The body has SETTLED on a page (RecyclerView idle — the point of no return, not the optimistic mid-drag
     // crossover). Adopt it as the selection, appending more pages first if we are nearing the end.
     private void OnBodySettled(int pos)
@@ -202,8 +234,18 @@ public sealed partial class TabbedPageView<TItem> : Component<TabbedPageViewStat
         var item = State.Buffer[pos];
         if (!item.Equals(_selected))
         {
+            // End the lockstep by DIRECT mutation *before* reporting up, so the single host re-render carries the
+            // new selection and the ended track together and the strip snaps onto the committed tab atomically. A
+            // separate/later SetState would render the strip with the ended track but a stale (still-old) selection,
+            // freezing the underscore on the previous tab.
             State.Position = pos;        // keep our record aligned with where the carousel already settled
-            _onSelectedChanged(item);    // report up; the host's Selected change re-centres the strip
+            State.BodyPos = null;
+            _onSelectedChanged(item);    // report up; the host's Selected change lands with track already cleared
+        }
+        else if (State.BodyPos is not null)
+        {
+            // Snap-back (no commit): our own render ends the track and re-centres the unchanged tab.
+            SetState(s => s.BodyPos = null);
         }
     }
 
