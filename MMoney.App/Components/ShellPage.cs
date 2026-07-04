@@ -4,12 +4,11 @@ using System.Globalization;
 using System.Linq;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Maui;
-using Microsoft.Maui.ApplicationModel;
-using Microsoft.Maui.Storage;
 using MauiReactor.Shapes;
 using Mobiorum.Material3;
 using MMoney.App.Ledger;
 using MMoney.Core;
+using MMoney.Core.Repeat;
 using MenuItem = Mobiorum.Material3.MenuItem; // disambiguate from MauiReactor.MenuItem
 
 namespace MMoney.App.Components;
@@ -41,7 +40,7 @@ partial class ShellPage : Component<ShellState>
 
     protected override void OnMounted()
     {
-        LoadPersistedTheme();
+        ThemePreference.Load();
         State.Manager = Services.GetRequiredService<AccountManager>();
         State.Month = MonthOnly.FromDate(State.Manager.Today);
         base.OnMounted();
@@ -60,7 +59,7 @@ partial class ShellPage : Component<ShellState>
                 RenderFab().GridRow(1),
                 RenderOverflowMenu(scheme).GridRowSpan(3) // overlay layer, on top of everything (ADR-0004)
             )
-        );
+        ).HasNavigationBar(false); // we draw our own banner; the NavigationPage bar stays hidden (ADR-0005)
     }
 
     // ---- banner (§4) -------------------------------------------------------------------------------------
@@ -258,19 +257,75 @@ partial class ShellPage : Component<ShellState>
 
     private static string Money(decimal value) => value.ToString("C", Gb);
 
-    // ---- repeating tab (walking skeleton — §6 later) -----------------------------------------------------
+    // ---- repeating tab (§6): the active repeating sequences ----------------------------------------------
 
-    private VisualNode RenderRepeating(MaterialScheme scheme) =>
-        VStack(
-            Label("Repeating").FontSize(20).TextColor(scheme.OnSurface).HCenter(),
-            Label("Walking skeleton — content goes here").FontSize(13).TextColor(scheme.OnSurfaceVariant).HCenter(),
-            Label("Theme (temporary)").FontSize(12).TextColor(scheme.OnSurfaceVariant).HCenter(),
-            HStack(
-                ThemeButton("System", AppTheme.Unspecified),
-                ThemeButton("Light", AppTheme.Light),
-                ThemeButton("Dark", AppTheme.Dark)
-            ).Spacing(8).HCenter()
-        ).Spacing(12).Padding(24).VCenter().HCenter();
+    // Upcoming sequences (those with an occurrence on/after today), filtered and sorted next-due ascending by
+    // Account.GetUpcomingSequences. One rounded surfaceContainer box (the day-box idiom) holds the rows; each row
+    // shows description · signed amount over recurrence (+ end condition) · next-due. Tapping a row will open
+    // whole-series edit (§8) — a no-op target for now.
+    private VisualNode RenderRepeating(MaterialScheme scheme)
+    {
+        var account = State.Manager?.GetAccounts().FirstOrDefault();
+        var today = State.Manager?.Today ?? DateOnly.FromDateTime(DateTime.Today);
+        var upcoming = account?.GetUpcomingSequences(today) ?? [];
+
+        if (upcoming.Count == 0)
+        {
+            return Grid(
+                Label("No repeating transactions")
+                    .FontSize(14)
+                    .TextColor(scheme.OnSurfaceVariant)
+                    .HCenter()
+                    .VCenter()
+            ).Padding(24);
+        }
+
+        return ScrollView(
+            Border(VStack([.. upcoming.Select(u => RepeatingRow(scheme, u))]).Spacing(0))
+                .BackgroundColor(scheme.SurfaceContainer)
+                .StrokeThickness(0)
+                .StrokeShape(new RoundRectangle().CornerRadius(16))
+                .Margin(16, 16, 16, 88) // bottom room so the last row clears the FAB
+        );
+    }
+
+    private VisualNode RepeatingRow(MaterialScheme scheme, UpcomingSequence upcoming)
+    {
+        var seq = upcoming.Sequence;
+        var isIncome = seq.Amount > 0;
+        var recurrence = RepeatDescription.Describe(seq.Strategy, seq.Origin)
+            + RepeatDescription.DescribeEndCondition(seq.EndCondition, seq.Schedule.EndDate());
+
+        return Grid("Auto,Auto", "*,Auto",
+                Label(seq.Description)
+                    .FontSize(15)
+                    .TextColor(scheme.OnSurface)
+                    .MaxLines(1)
+                    .LineBreakMode(LineBreakMode.TailTruncation)
+                    .VCenter()
+                    .GridRow(0).GridColumn(0),
+                Label(Money(seq.Amount))
+                    .FontSize(15)
+                    .TextColor(isIncome ? scheme.Income : scheme.Expense)
+                    .HEnd()
+                    .VCenter()
+                    .GridRow(0).GridColumn(1),
+                Label(recurrence)
+                    .FontSize(12)
+                    .TextColor(scheme.OnSurfaceVariant)
+                    .MaxLines(1)
+                    .LineBreakMode(LineBreakMode.TailTruncation)
+                    .GridRow(1).GridColumn(0),
+                Label($"next: {upcoming.NextDue.ToString("d MMM", Gb)}")
+                    .FontSize(12)
+                    .TextColor(scheme.OnSurfaceVariant)
+                    .HEnd()
+                    .GridRow(1).GridColumn(1)
+            )
+            .Padding(16, 12)
+            .ColumnSpacing(16)
+            .OnTapped(() => { }); // whole-series edit is §8
+    }
 
     // ---- chrome ------------------------------------------------------------------------------------------
 
@@ -309,7 +364,7 @@ partial class ShellPage : Component<ShellState>
                     .Items([
                         new MenuItem(MaterialSymbols.Print, "Print").OnSelected(CloseMenu),
                         new MenuItem(MaterialSymbols.Download, "Export").OnSelected(CloseMenu),
-                        new MenuItem(MaterialSymbols.Settings, "Settings").OnSelected(CloseMenu)
+                        new MenuItem(MaterialSymbols.Settings, "Settings").OnSelected(OpenSettings)
                     ])
                     .GridRow(1).GridColumn(1)
             )
@@ -317,6 +372,14 @@ partial class ShellPage : Component<ShellState>
     }
 
     private void CloseMenu() => SetState(s => s.MenuOpen = false);
+
+    // Dismiss the overflow menu, then push the Settings page onto the navigation stack (ADR-0005). Fire-and-forget:
+    // the OnSelected callback is synchronous and the push manages its own transition.
+    private void OpenSettings()
+    {
+        CloseMenu();
+        _ = Navigation?.PushAsync<SettingsPage>();
+    }
 
     private static VisualNode RenderFab() =>
         Grid(
@@ -327,29 +390,4 @@ partial class ShellPage : Component<ShellState>
         .HEnd()
         .VEnd()
         .Margin(0, 0, 16, -28);
-
-    private VisualNode ThemeButton(string label, AppTheme theme) =>
-        Button(label).FontSize(12).OnClicked(() => SetTheme(theme));
-
-    private void SetTheme(AppTheme theme)
-    {
-        Preferences.Default.Set(ThemePreferenceKey, theme.ToString());
-        if (MauiControls.Application.Current is { } app)
-        {
-            app.UserAppTheme = theme;
-        }
-
-        SetState(_ => { }); // re-render against the newly applied scheme
-    }
-
-    private static void LoadPersistedTheme()
-    {
-        var name = Preferences.Default.Get(ThemePreferenceKey, nameof(AppTheme.Unspecified));
-        if (Enum.TryParse<AppTheme>(name, out var theme) && MauiControls.Application.Current is { } app)
-        {
-            app.UserAppTheme = theme;
-        }
-    }
-
-    private const string ThemePreferenceKey = "app_theme";
 }

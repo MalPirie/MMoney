@@ -2,9 +2,14 @@
 
 The overflow **`Menu`** (banner three-dot → Print / Export / Settings) is the first overlay in the app, and
 whatever it establishes is the pattern the rest of the controls table's overlays — **AlertDialog**, the
-**radio-choice** and **date-picker** dialogs, the **Snackbar**, and the pushed **Settings** surface — will
-follow. We build overlays as a **conditionally-rendered layer inside the shell's root `Grid`** (spanning all
-rows): a full-page tap-catcher plus the positioned surface. No native `MenuFlyout`, no popup library.
+**radio-choice** and **date-picker** dialogs, and the **Snackbar** — will follow. We build overlays as a
+**conditionally-rendered layer inside the shell's root `Grid`** (spanning all rows): a full-page tap-catcher
+plus the positioned surface. No native `MenuFlyout`, no popup library.
+
+> **Correction (ADR-0005):** an earlier draft listed "the pushed **Settings** surface" among the followers of
+> this overlay pattern. That was imprecise. Settings — and Add/Edit and the repeat-strategy page — are **pushed
+> pages** on a `NavigationPage` stack, not overlay layers (see ADR-0005). This overlay pattern is for the
+> *non-page* overlays only: dialogs and the snackbar.
 
 ## Decision
 

@@ -15,7 +15,7 @@ namespace MMoney.App
         {
             var builder = MauiApp.CreateBuilder();
             builder
-                .UseMauiReactorApp<ShellPage>(app =>
+                .UseMauiReactorApp<AppRoot>(app =>
                     {
                         app.UseTheme<MMoneyTheme>();
                     },
