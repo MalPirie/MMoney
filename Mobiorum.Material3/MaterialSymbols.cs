@@ -19,4 +19,7 @@ public static class MaterialSymbols
     public static readonly string CalendarMonth = char.ConvertFromUtf32(0xEBCC); // calendar_month
     public static readonly string Event = char.ConvertFromUtf32(0xE878);         // event (calendar with a single date)
     public static readonly string Today = char.ConvertFromUtf32(0xE8DF);         // today (calendar with the current date)
+    public static readonly string Print = char.ConvertFromUtf32(0xE8AD);         // print (overflow menu)
+    public static readonly string Download = char.ConvertFromUtf32(0xF090);      // download (overflow menu — Export)
+    public static readonly string Settings = char.ConvertFromUtf32(0xE8B8);      // settings (overflow menu)
 }

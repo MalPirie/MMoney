@@ -17,12 +17,23 @@ namespace Mobiorum.Material3;
 /// </remarks>
 public static class Elevation
 {
-    /// <summary>M3 elevation level 2 (≈3dp) — e.g. the navigation bar.</summary>
+    /// <summary>No elevation — a fully transparent shadow, to toggle elevation off without passing null.</summary>
+    public static MauiReactor.Shadow None => new MauiReactor.Shadow()
+        .Brush(new MauiControls.SolidColorBrush(Colors.Black))
+        .Offset(0, 0)
+        .Radius(0)
+        .Opacity(0f);
+
+    /// <summary>
+    /// M3 elevation level 2 (≈3dp) — e.g. the navigation bar and dropdown menus. M3 conveys 3dp mostly through
+    /// tonal surface colour (the container roles already carry it), so the shadow is deliberately soft; a heavier
+    /// drop shadow reads as far higher than 3dp.
+    /// </summary>
     public static MauiReactor.Shadow Level2 => new MauiReactor.Shadow()
         .Brush(new MauiControls.SolidColorBrush(Colors.Black))
-        .Offset(0, 2)
-        .Radius(6)
-        .Opacity(0.18f);
+        .Offset(0, 1)
+        .Radius(2)
+        .Opacity(0.10f);
 
     /// <summary>M3 elevation level 3 (≈6dp) — e.g. the FAB.</summary>
     public static MauiReactor.Shadow Level3 => new MauiReactor.Shadow()

@@ -10,6 +10,7 @@ using MauiReactor.Shapes;
 using Mobiorum.Material3;
 using MMoney.App.Ledger;
 using MMoney.Core;
+using MenuItem = Mobiorum.Material3.MenuItem; // disambiguate from MauiReactor.MenuItem
 
 namespace MMoney.App.Components;
 
@@ -23,6 +24,9 @@ internal sealed class ShellState
 
     /// <summary>The event-sourced ledger, resolved from DI on mount.</summary>
     public AccountManager? Manager { get; set; }
+
+    /// <summary>Whether the banner's overflow (three-dot) dropdown menu is open.</summary>
+    public bool MenuOpen { get; set; }
 }
 
 /// <summary>
@@ -53,7 +57,8 @@ partial class ShellPage : Component<ShellState>
                 RenderBanner(scheme, account).GridRow(0),
                 RenderCentral(scheme, account).GridRow(1),
                 RenderNavBar().GridRow(2),
-                RenderFab().GridRow(1)
+                RenderFab().GridRow(1),
+                RenderOverflowMenu(scheme).GridRowSpan(3) // overlay layer, on top of everything (ADR-0004)
             )
         );
     }
@@ -87,6 +92,7 @@ partial class ShellPage : Component<ShellState>
                 .HEnd()
                 .VStart()
                 .Margin(0, -4, -12, 0) // pull the 48dp target toward the top-right corner (≈16dp M3 inset)
+                .OnClicked(() => SetState(s => s.MenuOpen = true))
                 .GridColumn(1).GridRow(0),
             VStack(
                 Label($"Available {Money(available)}").FontSize(12).TextColor(scheme.OnPrimary).HEnd(),
@@ -279,6 +285,38 @@ partial class ShellPage : Component<ShellState>
                     .OnSelected(() => SetState(s => s.Tab = 1))
             ])
             .Arrangement(NavArrangement.Start);
+
+    // The banner's three-dot overflow, as an M3 dropdown (ADR-0004). An app-owned overlay layer: a transparent
+    // full-page tap-catcher that dismisses on an outside tap, with the generic Menu surface anchored top-right so it
+    // covers the trigger. Menus are not modal, so there is no dimming scrim (that is reserved for dialogs). The layer
+    // stays in the tree so the open/close fade+scale animates, and is input-transparent while closed so touches pass
+    // through to the banner and ledger beneath.
+    private VisualNode RenderOverflowMenu(MaterialScheme scheme)
+    {
+        var open = State.MenuOpen;
+
+        // Deterministic placement via fixed inset tracks + GridRow/GridColumn (which work on a Component, unlike
+        // the IView-only HEnd/Margin). The button's measured bounds put its top-right corner 8dp in from the top
+        // and 8dp in from the right of the content area, so 8dp inset tracks align the menu's top-right to it.
+        return Grid("8,Auto,*", "*,Auto,8",
+                Border()
+                    .BackgroundColor(Colors.Transparent) // non-null ⇒ catches outside taps; no dim
+                    .StrokeThickness(0)
+                    .OnTapped(CloseMenu)
+                    .GridRowSpan(3).GridColumnSpan(3),
+                new Menu()
+                    .IsOpen(open) // the open/close fade+scale is the control's own concern now
+                    .Items([
+                        new MenuItem(MaterialSymbols.Print, "Print").OnSelected(CloseMenu),
+                        new MenuItem(MaterialSymbols.Download, "Export").OnSelected(CloseMenu),
+                        new MenuItem(MaterialSymbols.Settings, "Settings").OnSelected(CloseMenu)
+                    ])
+                    .GridRow(1).GridColumn(1)
+            )
+            .InputTransparent(!open); // closed: let touches through; open: catch outside taps
+    }
+
+    private void CloseMenu() => SetState(s => s.MenuOpen = false);
 
     private static VisualNode RenderFab() =>
         Grid(
