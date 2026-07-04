@@ -26,6 +26,17 @@ public static class MobiorumMaterial3
 
         CarouselSettleObserver.Install(); // adds the CarouselView scroll-settle hook (Android; no-op elsewhere)
 
+#if ANDROID
+        // Strip the native underline from text inputs so they can live inside our M3 filled fields (which draw
+        // their own active indicator). Without this the platform underline doubles up with ours. The Android
+        // Entry and DatePicker both back onto an EditText, so both need it.
+        var transparent = Android.Content.Res.ColorStateList.ValueOf(Android.Graphics.Color.Transparent);
+        Microsoft.Maui.Handlers.EntryHandler.Mapper.AppendToMapping("MobiorumNoUnderline", (handler, _) =>
+            handler.PlatformView.BackgroundTintList = transparent);
+        Microsoft.Maui.Handlers.DatePickerHandler.Mapper.AppendToMapping("MobiorumNoUnderline", (handler, _) =>
+            handler.PlatformView.BackgroundTintList = transparent);
+#endif
+
         return builder;
     }
 }

@@ -381,13 +381,27 @@ partial class ShellPage : Component<ShellState>
         _ = Navigation?.PushAsync<SettingsPage>();
     }
 
-    private static VisualNode RenderFab() =>
+    private VisualNode RenderFab() =>
         Grid(
             new Fab()
                 .Icon(MaterialSymbols.Add)
-                .OnClicked(() => { }) // add flow not wired yet (§7)
+                .OnClicked(OpenAdd) // the unified add flow (§7)
         )
         .HEnd()
         .VEnd()
         .Margin(0, 0, 16, -28);
+
+    // Push the Add-transaction page (§7). We push a pre-configured instance (not PushAsync<T>, which mints its own
+    // and has no props hook) so the page carries the OnClosed callback that reports its outcome back to the shell.
+    private void OpenAdd() =>
+        _ = Navigation?.PushAsync<AddTransactionPage, AddTransactionProps>(props => props.OnClosed = OnTransactionClosed);
+
+    // When a transaction was saved, jump the ledger to its month (SetState also re-renders, so the new row shows).
+    private void OnTransactionClosed(TransactionOutcome outcome)
+    {
+        if (outcome.Result == TransactionResult.Saved)
+        {
+            SetState(s => s.Month = MonthOnly.FromDate(outcome.Date));
+        }
+    }
 }

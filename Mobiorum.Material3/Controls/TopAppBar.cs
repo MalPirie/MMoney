@@ -24,6 +24,12 @@ public sealed partial class TopAppBar : Component
     /// <summary>The colour of the title and back icon; defaults to <c>onSurface</c>. Set via <c>.OnContainer(...)</c>.</summary>
     [Prop] Color? _onContainer;
 
+    /// <summary>An optional trailing text action (e.g. "Save"); shown only when both this and <see cref="OnAction"/> are set. Set via <c>.ActionText(...)</c>.</summary>
+    [Prop] string _actionText = string.Empty;
+
+    /// <summary>Invoked when the trailing action is tapped. Set via <c>.OnAction(...)</c>.</summary>
+    [Prop] Action? _onAction;
+
     public override VisualNode Render()
     {
         var scheme = MaterialTheme.Current;
@@ -57,7 +63,22 @@ public sealed partial class TopAppBar : Component
             .Margin(_onBack is null ? 16 : 4, 0, 0, 0)
             .GridColumn(1));
 
-        return Grid("64", "Auto,*", [.. children])
+        if (_onAction is not null && !string.IsNullOrEmpty(_actionText))
+        {
+            children.Add(Button(_actionText)
+                .BackgroundColor(Colors.Transparent)
+                .TextColor(onContainer)
+                .FontFamily("OpenSansSemibold")
+                .FontSize(14)
+                .Padding(12, 0)
+                .VCenter()
+                .Margin(0, 0, 4, 0)
+                .OnClicked(() => _onAction?.Invoke())
+                .GridColumn(2));
+        }
+
+        // Auto,*,Auto: the back icon and trailing action size to content, the title takes the middle.
+        return Grid("64", "Auto,*,Auto", [.. children])
             .BackgroundColor(container);
     }
 }
