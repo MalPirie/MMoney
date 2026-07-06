@@ -5,8 +5,8 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Maui;
+using Microsoft.Maui.Graphics;
 using MauiReactor;
-using MauiReactor.Shapes;
 using Mobiorum.Material3;
 using MMoney.Core;
 
@@ -118,40 +118,34 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
         ).HasNavigationBar(false);
     }
 
-    // The date field, styled to match the filled TextField (label + surfaceContainer + bottom indicator). The picker
-    // is MAUI's native DatePicker, which opens a modal dialog over the field — so it carries no focus highlight (you
-    // wouldn't see it behind the dialog). A focus state arrives when we build the inline M3 date field.
+    // The date field hosts MAUI's native DatePicker inside the shared outlined TextField frame (Content slot), so it
+    // matches the other fields' outline and notched label. The picker opens a modal dialog over the field, so it
+    // carries no focus highlight (you wouldn't see it behind the dialog) — the label simply stays floated.
     private VisualNode DateField(MaterialScheme scheme, DateTime minDate) =>
-        Border(
-            VStack(
-                Label("Date").FontSize(12).TextColor(scheme.OnSurfaceVariant),
+        new TextField()
+            .Label("Date")
+            .Content(
                 DatePicker()
                     .Date(State.Date.ToDateTime(TimeOnly.MinValue))
                     .MinimumDate(minDate)
-                    .Format("ddd d MMM yyyy")
+                    .Format("ddd d MMMM yyyy")
                     .TextColor(scheme.OnSurface)
+                    .BackgroundColor(Colors.Transparent)
+                    .VCenter()
                     .OnDateSelected((MauiControls.DateChangedEventArgs e) => SetState(s => s.Date = DateOnly.FromDateTime(e.NewDate ?? DateTime.Today)))
-            ).Spacing(2)
-        )
-        .BackgroundColor(scheme.SurfaceContainer)
-        .Stroke(new MauiControls.SolidColorBrush(scheme.Outline))
-        .StrokeThickness(1)
-        .StrokeShape(new RoundRectangle().CornerRadius(8))
-        .Padding(12, 8);
+            );
 
     // The Repeat field is a disabled placeholder for now — it will open the §8 repeat-strategy page in a later slice.
+    // Its static "Does not repeat" value rides the same outlined frame via the Content slot.
     private static VisualNode RepeatField(MaterialScheme scheme) =>
-        Border(
-            VStack(
-                Label("Repeat").FontSize(12).TextColor(scheme.OnSurfaceVariant),
-                Label("Does not repeat").FontSize(15).TextColor(scheme.OnSurfaceVariant)
-            ).Spacing(2)
-        )
-        .BackgroundColor(scheme.SurfaceContainer)
-        .Stroke(new MauiControls.SolidColorBrush(scheme.Outline))
-        .StrokeThickness(1)
-        .StrokeShape(new RoundRectangle().CornerRadius(8))
-        .Padding(12, 8);
+        new TextField()
+            .Label("Repeat")
+            .Content(
+                Label("Does not repeat")
+                    .FontSize(16)
+                    .TextColor(scheme.OnSurfaceVariant)
+                    .VCenter()
+            );
 
     // Strip any minus as typed (unsigned magnitude — sign is the toggle's job) and clear the error once valid.
     private void OnAmountChanged(string text)

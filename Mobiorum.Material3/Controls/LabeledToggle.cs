@@ -17,6 +17,10 @@ public sealed class LabeledToggleState
 
     /// <summary>The thumb's left offset (dp within the padded track) while dragging.</summary>
     public double DragX { get; set; }
+
+    /// <summary>Whether the thumb should animate its slide. False until the first tap/drag, so it simply appears in
+    /// place on the initial layout (when the width is first measured) rather than sliding in from the left.</summary>
+    public bool Animate { get; set; }
 }
 
 /// <summary>
@@ -64,10 +68,12 @@ public sealed partial class LabeledToggle : Component<LabeledToggleState>
         var thumbColor = onSide ? onColor : offColor;
 
         return Grid($"{TrackHeight}", "*",
-            // track
+            // track: an outlined pill (a subtle surfaceContainer fill — between plain surface and the heavier
+            // surfaceVariant grey — plus a 1px outline) so it reads as a nested field element inside an outlined TextField.
             Border()
-                .BackgroundColor(scheme.SurfaceVariant)
-                .StrokeThickness(0)
+                .BackgroundColor(scheme.SurfaceContainer)
+                .Stroke(new MauiControls.SolidColorBrush(scheme.Outline))
+                .StrokeThickness(1)
                 .StrokeShape(new RoundRectangle().CornerRadius(Radius)),
 
             // the inset, elevated, sliding thumb (a rounded knob covering one side)
@@ -80,7 +86,8 @@ public sealed partial class LabeledToggle : Component<LabeledToggleState>
                     .HStart()
                     .TranslationX(thumbX)
                     .Shadow(Elevation.Level2)
-                    .WithAnimation(duration: State.Dragging ? 0 : 150)
+                    // Slide only once the user has interacted; on first layout the thumb just appears in place.
+                    .WithAnimation(duration: State.Dragging || !State.Animate ? 0 : 150)
             ).Padding(Pad),
 
             // labels (above the thumb so the active one reads white on its colour)
@@ -106,7 +113,11 @@ public sealed partial class LabeledToggle : Component<LabeledToggleState>
         });
     }
 
-    private void Toggle() => _onToggled?.Invoke(!_isOn);
+    private void Toggle()
+    {
+        SetState(s => s.Animate = true); // a tap is a real interaction — let the resulting move slide
+        _onToggled?.Invoke(!_isOn);
+    }
 
     private void OnPan(MauiControls.PanUpdatedEventArgs e)
     {
@@ -132,7 +143,7 @@ public sealed partial class LabeledToggle : Component<LabeledToggleState>
             case GestureStatus.Completed:
             case GestureStatus.Canceled:
                 var target = State.DragX >= half / 2; // snap to the nearer side
-                SetState(s => s.Dragging = false);
+                SetState(s => { s.Dragging = false; s.Animate = true; }); // animate the release snap
                 if (target != _isOn)
                 {
                     _onToggled?.Invoke(target);

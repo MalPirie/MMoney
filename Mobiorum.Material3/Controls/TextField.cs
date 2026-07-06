@@ -9,17 +9,18 @@ namespace Mobiorum.Material3;
 /// <summary>The <see cref="TextField"/>'s internal presentational state — just its focus flag.</summary>
 public sealed class TextFieldState
 {
-    /// <summary>Whether the inner entry currently holds focus (drives the label/indicator accent).</summary>
+    /// <summary>Whether the inner entry currently holds focus (drives the label/outline accent and floats the label).</summary>
     public bool Focused { get; set; }
 }
 
 /// <summary>
-/// A Material 3 <em>filled</em> text field: a <c>surfaceContainer</c> container with rounded top corners, a label,
-/// the entry, a bottom active indicator, and a supporting/error line. The label and indicator take the accent —
-/// <c>primary</c> while focused, <c>error</c> when <see cref="Error"/> is set, otherwise <c>onSurfaceVariant</c>.
-/// It owns only its focus state (presentational); the text itself is host-driven — the host passes <see cref="Text"/>
-/// and updates it in <see cref="OnTextChanged"/> (ADR-0001). Seed-agnostic: it reads roles from
-/// <see cref="MaterialTheme.Current"/>.
+/// A Material 3 <em>outlined</em> text field: a transparent box with a rounded outline, a label notched into the top
+/// of that outline, an inner entry (or host-supplied content), and a supporting/error line. The outline and label
+/// take the accent — <c>primary</c> while focused, <c>error</c> when <see cref="Error"/> is set, otherwise
+/// <c>outline</c>/<c>onSurfaceVariant</c>; the outline thickens only on focus. The label always sits in the notch so
+/// every field reads consistently whether or not it holds a value, with any placeholder/hint shown inside. It owns
+/// only its focus state (presentational); the text is host-driven — the host passes <see cref="Text"/> and updates it
+/// in <see cref="OnTextChanged"/> (ADR-0001). Seed-agnostic: it reads roles from <see cref="MaterialTheme.Current"/>.
 /// </summary>
 public sealed partial class TextField : Component<TextFieldState>
 {
@@ -29,7 +30,7 @@ public sealed partial class TextField : Component<TextFieldState>
     /// <summary>The current text (host-driven). Set via <c>.Text(...)</c>.</summary>
     [Prop] string _text = string.Empty;
 
-    /// <summary>Placeholder shown while empty. Set via <c>.Placeholder(...)</c>.</summary>
+    /// <summary>Placeholder/hint shown inside once the label has floated up. Set via <c>.Placeholder(...)</c>.</summary>
     [Prop] string _placeholder = string.Empty;
 
     /// <summary>Error text; when set, the field takes the error accent and shows this as supporting text. Set via <c>.Error(...)</c>.</summary>
@@ -44,49 +45,55 @@ public sealed partial class TextField : Component<TextFieldState>
     /// <summary>Invoked as the text changes. Set via <c>.OnTextChanged(...)</c>.</summary>
     [Prop] Action<string>? _onTextChanged;
 
-    /// <summary>Optional content shown inside the container to the right of the entry (e.g. a unit toggle). Set via <c>.Trailing(...)</c>.</summary>
+    /// <summary>Optional content shown inside the outline to the right of the entry (e.g. a unit toggle). Set via <c>.Trailing(...)</c>.</summary>
     [Prop] VisualNode? _trailing;
+
+    /// <summary>
+    /// Host-supplied inner content that replaces the built entry (e.g. a date picker or a static value). When set,
+    /// the field always reads as populated, so the label stays floated. The content should centre itself vertically
+    /// (e.g. <c>.VCenter()</c>). Set via <c>.Content(...)</c>.
+    /// </summary>
+    [Prop] VisualNode? _content;
 
     public override VisualNode Render()
     {
         var scheme = MaterialTheme.Current;
         var hasError = !string.IsNullOrEmpty(_error);
-        // The border takes the accent; the label follows the same focus/error signal on a neutral resting colour.
+
+        // The outline takes the accent; the floating label follows the same focus/error signal on a resting colour.
         var borderAccent = hasError ? scheme.Error : State.Focused ? scheme.Primary : scheme.Outline;
         var labelAccent = hasError ? scheme.Error : State.Focused ? scheme.Primary : scheme.OnSurfaceVariant;
         var supporting = _error ?? _supporting;
 
-        // Component.Label(...): the generated .Label prop setter shadows the Label factory inside this class.
-        var entry = Entry()
-            .Text(_text)
-            .Placeholder(_placeholder)
-            .PlaceholderColor(scheme.OnSurfaceVariant)
-            .TextColor(scheme.OnSurface)
-            .BackgroundColor(Colors.Transparent)
-            .Keyboard(_keyboard ?? Microsoft.Maui.Keyboard.Default) // qualify: the .Keyboard prop shadows the type here
-            .OnTextChanged(t => _onTextChanged?.Invoke(t))
-            .OnFocused(() => SetState(s => s.Focused = true))
-            .OnUnfocused(() => SetState(s => s.Focused = false));
+        // The field's inner content: host-supplied (a picker, a static value) or the built text entry.
+        var inner = _content ?? BuildEntry(scheme);
 
-        // The entry, plus optional trailing content (e.g. a unit toggle) to its right — all inside the border.
-        VisualNode entryRow = _trailing is null
-            ? entry
-            : Grid("*", "*,Auto", entry.GridColumn(0), _trailing.GridColumn(1)).ColumnSpacing(8);
+        // The entry, plus optional trailing content (e.g. a unit toggle) to its right — all inside the outline.
+        var innerRow = _trailing is null
+            ? inner
+            : Grid("*", "*,Auto", inner.GridColumn(0), _trailing.GridColumn(1)).ColumnSpacing(8);
 
-        var children = new List<VisualNode>
-        {
-            Border(
-                VStack(
-                    Component.Label(_label).FontSize(12).TextColor(labelAccent),
-                    entryRow
-                ).Spacing(2)
-            )
-            .BackgroundColor(scheme.SurfaceContainer)
-            .Stroke(new MauiControls.SolidColorBrush(borderAccent))
-            .StrokeThickness(State.Focused || hasError ? 2 : 1) // outlined M3 field: the border carries the accent
-            .StrokeShape(new RoundRectangle().CornerRadius(8))
-            .Padding(12, 8),
-        };
+        // The label always straddles the top outline (notched), so every field reads the same whether or not it has
+        // a value; its surface-coloured chip masks the stroke behind the text. The 12dp left margin + 4dp inner
+        // padding line the text up over the box's 16dp content inset. Component.Label(...): the generated .Label prop
+        // setter shadows the Label factory inside this class.
+        var frame = Grid(
+            Border(innerRow)
+                .BackgroundColor(Colors.Transparent) // outlined M3 field: no fill, the outline carries the accent
+                .Stroke(new MauiControls.SolidColorBrush(borderAccent))
+                .StrokeThickness(State.Focused ? 2 : 1) // M3: outline thickens only on focus (error stays thin at rest)
+                .StrokeShape(new RoundRectangle().CornerRadius(8))
+                .Padding(16, 0, _trailing is null ? 16 : 8, 0) // tighter right inset with trailing content, so it sits nearer the outline
+                .MinimumHeightRequest(56),
+            Grid(Component.Label(_label).FontSize(12).TextColor(labelAccent))
+                .BackgroundColor(scheme.Surface)
+                .Padding(4, 0)
+                .HStart()
+                .VStart()
+                .Margin(12, 0, 0, 0)
+                .TranslationY(-8));
+
+        var children = new List<VisualNode> { frame };
 
         if (!string.IsNullOrEmpty(supporting))
         {
@@ -98,4 +105,18 @@ public sealed partial class TextField : Component<TextFieldState>
 
         return VStack([.. children]).Spacing(0);
     }
+
+    // The inner text entry. The label always floats into the outline, so the entry just shows the placeholder/hint.
+    private VisualNode BuildEntry(MaterialScheme scheme) =>
+        Entry()
+            .Text(_text)
+            .Placeholder(_placeholder)
+            .PlaceholderColor(scheme.OnSurfaceVariant)
+            .TextColor(scheme.OnSurface)
+            .BackgroundColor(Colors.Transparent)
+            .VCenter()
+            .Keyboard(_keyboard ?? Microsoft.Maui.Keyboard.Default) // qualify: the .Keyboard prop shadows the type here
+            .OnTextChanged(t => _onTextChanged?.Invoke(t))
+            .OnFocused(() => SetState(s => s.Focused = true))
+            .OnUnfocused(() => SetState(s => s.Focused = false));
 }
