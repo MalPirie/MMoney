@@ -16,6 +16,8 @@
       components — is intentionally not linked.
     -->
     <Compile Include="..\MMoney.App\Ledger\MonthLedger.cs" LinkBase="Ledger" />
+    <!-- DateEntry is the pure mask/parse/format logic behind the transaction date field (ADR-0006). -->
+    <Compile Include="..\MMoney.App\Input\DateEntry.cs" LinkBase="Input" />
   </ItemGroup>
 
   <ItemGroup>

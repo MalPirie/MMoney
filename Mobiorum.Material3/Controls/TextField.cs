@@ -45,6 +45,13 @@ public sealed partial class TextField : Component<TextFieldState>
     /// <summary>Invoked as the text changes. Set via <c>.OnTextChanged(...)</c>.</summary>
     [Prop] Action<string>? _onTextChanged;
 
+    /// <summary>Invoked when the inner entry gains focus (lets the host track the active field). Set via <c>.OnFocused(...)</c>.</summary>
+    [Prop] Action? _onFocused;
+
+    /// <summary>Forces the focused appearance (accent outline/label) even without real focus — e.g. while a picker
+    /// the field owns is open. OR-ed with the real focus state. Set via <c>.Active(...)</c>.</summary>
+    [Prop] bool _active;
+
     /// <summary>Optional content shown inside the outline to the right of the entry (e.g. a unit toggle). Set via <c>.Trailing(...)</c>.</summary>
     [Prop] VisualNode? _trailing;
 
@@ -59,10 +66,12 @@ public sealed partial class TextField : Component<TextFieldState>
     {
         var scheme = MaterialTheme.Current;
         var hasError = !string.IsNullOrEmpty(_error);
+        // Real focus or a host-forced "active" (e.g. this field's picker is open) both read as focused.
+        var focused = State.Focused || _active;
 
         // The outline takes the accent; the floating label follows the same focus/error signal on a resting colour.
-        var borderAccent = hasError ? scheme.Error : State.Focused ? scheme.Primary : scheme.Outline;
-        var labelAccent = hasError ? scheme.Error : State.Focused ? scheme.Primary : scheme.OnSurfaceVariant;
+        var borderAccent = hasError ? scheme.Error : focused ? scheme.Primary : scheme.Outline;
+        var labelAccent = hasError ? scheme.Error : focused ? scheme.Primary : scheme.OnSurfaceVariant;
         var supporting = _error ?? _supporting;
 
         // The field's inner content: host-supplied (a picker, a static value) or the built text entry.
@@ -81,7 +90,7 @@ public sealed partial class TextField : Component<TextFieldState>
             Border(innerRow)
                 .BackgroundColor(Colors.Transparent) // outlined M3 field: no fill, the outline carries the accent
                 .Stroke(new MauiControls.SolidColorBrush(borderAccent))
-                .StrokeThickness(State.Focused ? 2 : 1) // M3: outline thickens only on focus (error stays thin at rest)
+                .StrokeThickness(focused ? 2 : 1) // M3: outline thickens on focus (error stays thin at rest)
                 .StrokeShape(new RoundRectangle().CornerRadius(8))
                 .Padding(16, 0, _trailing is null ? 16 : 8, 0) // tighter right inset with trailing content, so it sits nearer the outline
                 .MinimumHeightRequest(56),
@@ -117,6 +126,10 @@ public sealed partial class TextField : Component<TextFieldState>
             .VCenter()
             .Keyboard(_keyboard ?? Microsoft.Maui.Keyboard.Default) // qualify: the .Keyboard prop shadows the type here
             .OnTextChanged(t => _onTextChanged?.Invoke(t))
-            .OnFocused(() => SetState(s => s.Focused = true))
+            .OnFocused(() =>
+            {
+                SetState(s => s.Focused = true);
+                _onFocused?.Invoke();
+            })
             .OnUnfocused(() => SetState(s => s.Focused = false));
 }

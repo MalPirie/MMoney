@@ -8,6 +8,7 @@ using Microsoft.Maui;
 using Microsoft.Maui.Graphics;
 using MauiReactor;
 using Mobiorum.Material3;
+using MMoney.App.Input;
 using MMoney.Core;
 
 namespace MMoney.App.Components;
@@ -38,12 +39,16 @@ internal sealed class AddTransactionProps
 internal sealed class AddTransactionState
 {
     public AccountManager? Manager { get; set; }
-    public DateOnly Date { get; set; }
+    public DateOnly Date { get; set; }             // the committed (last-good) date
+    public string DateText { get; set; } = string.Empty; // the date field's raw/masked text buffer
     public string AmountText { get; set; } = string.Empty;
     public string Description { get; set; } = string.Empty;
     public bool IsIncome { get; set; } // default false = Expense (app-design §7)
+    public bool DateActive { get; set; } // the date field reads as the active/focused one (survives opening the calendar)
+    public string? DateError { get; set; }
     public string? AmountError { get; set; }
     public string? DescriptionError { get; set; }
+    public bool CalendarOpen { get; set; } // whether the M3 calendar dialog is showing (ADR-0006)
 }
 
 /// <summary>
@@ -58,34 +63,65 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
 {
     private static readonly CultureInfo Gb = CultureInfo.GetCultureInfo("en-GB");
 
+#if ANDROID
+    // Android hardware-back handler: while enabled it cancels the open calendar dialog instead of letting back pop
+    // the whole page (ADR-0006). MauiReactor 4.0.15 exposes no page back hook, so we drive it at the platform layer.
+    private CalendarBackCallback? _backCallback;
+#endif
+
     protected override void OnMounted()
     {
         State.Manager = Services.GetRequiredService<AccountManager>();
         State.Date = State.Manager.Today;
+        State.DateText = DateEntry.Format(State.Date);
+
+#if ANDROID
+        if (Microsoft.Maui.ApplicationModel.Platform.CurrentActivity is AndroidX.Activity.ComponentActivity activity)
+        {
+            _backCallback = new CalendarBackCallback(CancelCalendar);
+            activity.OnBackPressedDispatcher.AddCallback(_backCallback);
+        }
+#endif
         base.OnMounted();
+    }
+
+    protected override void OnWillUnmount()
+    {
+#if ANDROID
+        _backCallback?.Remove();
+        _backCallback = null;
+#endif
+        base.OnWillUnmount();
+    }
+
+    // Enable back-interception only while the dialog is open, so a closed-dialog back still pops the page normally.
+    private void SetBackInterception(bool enabled)
+    {
+#if ANDROID
+        if (_backCallback is not null)
+        {
+            _backCallback.Enabled = enabled;
+        }
+#endif
     }
 
     public override VisualNode Render()
     {
         var scheme = MaterialTheme.Current;
-        var account = State.Manager?.GetAccounts().FirstOrDefault();
-        var editLock = account?.EarliestAllowedDate ?? DateOnly.MinValue;
-        // MAUI's DatePicker floors at 1900; only push the minimum up to a real edit lock.
-        var minDate = editLock.Year < 1900 ? new DateTime(1900, 1, 1) : editLock.ToDateTime(TimeOnly.MinValue);
 
-        return ContentPage(
-            Grid("Auto,*", "*",
-                new TopAppBar()
-                    .Title("Add transaction")
-                    .Container(scheme.Primary)
-                    .OnContainer(scheme.OnPrimary)
-                    .OnBack(Cancel)
-                    .ActionText("Save")
-                    .OnAction(Save)
-                    .GridRow(0),
-                ScrollView(
+        var content = new List<VisualNode>
+        {
+            new TopAppBar()
+                .Title("Add transaction")
+                .Container(scheme.Primary)
+                .OnContainer(scheme.OnPrimary)
+                .OnBack(Cancel)
+                .ActionText("Save")
+                .OnAction(Save)
+                .GridRow(0),
+            ScrollView(
                     VStack(
-                        DateField(scheme, minDate),
+                        DateField(scheme),
                         // Amount and its income/expense type share one full-width bordered field — the type drives
                         // the amount's sign, so the In/Out toggle lives inside the field's bounds, trailing the entry.
                         new TextField()
@@ -94,6 +130,7 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
                             .Placeholder("0.00")
                             .Keyboard(Keyboard.Numeric)
                             .Error(State.AmountError)
+                            .OnFocused(() => SetState(s => s.DateActive = false))
                             .OnTextChanged(OnAmountChanged)
                             .Trailing(
                                 Grid(
@@ -110,29 +147,80 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
                             .Placeholder("e.g. Groceries")
                             .Keyboard(Keyboard.Create(KeyboardFlags.CapitalizeSentence)) // leading capital
                             .Error(State.DescriptionError)
+                            .OnFocused(() => SetState(s => s.DateActive = false))
                             .OnTextChanged(OnDescriptionChanged),
                         RepeatField(scheme)
                     ).Spacing(20).Padding(16)
-                ).GridRow(1)
-            )
+                ).GridRow(1),
+        };
+
+        // The M3 calendar dialog is the app's first modal overlay (ADR-0006): a dimmed scrim + centred card layered
+        // over the page's rows, hosted here on the pushed page (not the shell), and in the tree only while open.
+        if (State.CalendarOpen)
+        {
+            content.Add(CalendarOverlay(scheme).GridRowSpan(2));
+        }
+
+        return ContentPage(
+            Grid("Auto,*", "*", [.. content])
         ).HasNavigationBar(false);
     }
 
-    // The date field hosts MAUI's native DatePicker inside the shared outlined TextField frame (Content slot), so it
-    // matches the other fields' outline and notched label. The picker opens a modal dialog over the field, so it
-    // carries no focus highlight (you wouldn't see it behind the dialog) — the label simply stays floated.
-    private VisualNode DateField(MaterialScheme scheme, DateTime minDate) =>
+    // The edit-lock floor as a nullable minimum: null when no month has been closed (unbounded back), otherwise the
+    // earliest allowed date. Drives both the calendar's disabled days and manual-entry range validation.
+    private DateOnly? MinDate()
+    {
+        var account = State.Manager?.GetAccounts().FirstOrDefault();
+        var editLock = account?.EarliestAllowedDate ?? DateOnly.MinValue;
+        return editLock.Year < 1900 ? null : editLock;
+    }
+
+    private bool InRange(DateOnly date) => MinDate() is not { } min || date >= min;
+
+    // The scrim + centred Calendar. Star tracks around an Auto centre cell centre the card (HCenter/VCenter don't
+    // apply to a Component's root; GridRow/GridColumn placement does — ADR-0004).
+    private VisualNode CalendarOverlay(MaterialScheme scheme) =>
+        Grid("*,Auto,*", "*,Auto,*",
+            Border()
+                .BackgroundColor(Colors.Black.WithAlpha(0.32f)) // M3 modal scrim
+                .StrokeThickness(0)
+                .OnTapped(CancelCalendar)
+                .GridRowSpan(3).GridColumnSpan(3),
+            new Mobiorum.Material3.Calendar()
+                .SelectedDate(State.Date)
+                .MinDate(MinDate())
+                .Today(State.Manager?.Today ?? DateOnly.FromDateTime(DateTime.Today))
+                .OnConfirm(ConfirmCalendar)
+                .OnCancel(CancelCalendar)
+                .GridRow(1).GridColumn(1)
+        );
+
+    // The dual-mode date field (ADR-0006): the outlined TextField in text mode for manual dd/MM/yyyy entry, with a
+    // trailing calendar button that opens the M3 Calendar dialog. The weekday rides as the supporting hint (yielding
+    // to the error line). Tapping the entry types; tapping the button picks.
+    private VisualNode DateField(MaterialScheme scheme) =>
         new TextField()
             .Label("Date")
-            .Content(
-                DatePicker()
-                    .Date(State.Date.ToDateTime(TimeOnly.MinValue))
-                    .MinimumDate(minDate)
-                    .Format("ddd d MMMM yyyy")
-                    .TextColor(scheme.OnSurface)
+            .Text(State.DateText)
+            .Placeholder("dd/mm/yyyy")
+            .Keyboard(Keyboard.Numeric)
+            .Supporting(DateEntry.Weekday(State.Date))
+            .Error(State.DateError)
+            .Active(State.DateActive) // stays lit through the calendar and after (see OpenCalendar / the other fields)
+            .OnFocused(() => SetState(s => s.DateActive = true))
+            .OnTextChanged(OnDateChanged)
+            .Trailing(
+                Button(MaterialSymbols.CalendarMonth)
+                    .FontFamily(MaterialSymbols.FontFamily)
+                    .FontSize(22)
                     .BackgroundColor(Colors.Transparent)
+                    .TextColor(scheme.OnSurfaceVariant)
+                    .Padding(0)
+                    .CornerRadius(20)
+                    .WidthRequest(40)
+                    .HeightRequest(40)
                     .VCenter()
-                    .OnDateSelected((MauiControls.DateChangedEventArgs e) => SetState(s => s.Date = DateOnly.FromDateTime(e.NewDate ?? DateTime.Today)))
+                    .OnClicked(OpenCalendar)
             );
 
     // The Repeat field is a disabled placeholder for now — it will open the §8 repeat-strategy page in a later slice.
@@ -146,6 +234,53 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
                     .TextColor(scheme.OnSurfaceVariant)
                     .VCenter()
             );
+
+    // Mask to dd/MM/yyyy as typed; live-commit on a complete, in-range date (keeping the last-good Date otherwise)
+    // and clear the error once valid. The below-lock / incomplete cases are surfaced on Save, per the page's pattern.
+    private void OnDateChanged(string text)
+    {
+        var masked = DateEntry.Mask(text);
+        SetState(s =>
+        {
+            s.DateText = masked;
+            if (DateEntry.TryParse(masked, out var date) && InRange(date))
+            {
+                s.Date = date;
+                s.DateError = null;
+            }
+        });
+    }
+
+    // Open the calendar dialog; dismiss the soft keyboard first so it doesn't fight the modal, and arm hardware-back.
+    private void OpenCalendar()
+    {
+        HideKeyboard();
+        SetBackInterception(true);
+        SetState(s =>
+        {
+            s.CalendarOpen = true;
+            s.DateActive = true; // the calendar belongs to the date field — light it and keep it lit
+        });
+    }
+
+    private void CancelCalendar()
+    {
+        SetBackInterception(false);
+        SetState(s => s.CalendarOpen = false);
+    }
+
+    // OK: the picked date overwrites both the committed value and the text buffer, and closes the dialog.
+    private void ConfirmCalendar(DateOnly date)
+    {
+        SetBackInterception(false);
+        SetState(s =>
+        {
+            s.Date = date;
+            s.DateText = DateEntry.Format(date);
+            s.DateError = null;
+            s.CalendarOpen = false;
+        });
+    }
 
     // Strip any minus as typed (unsigned magnitude — sign is the toggle's job) and clear the error once valid.
     private void OnAmountChanged(string text)
@@ -198,13 +333,17 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
             return;
         }
 
+        var dateError = !DateEntry.TryParse(State.DateText, out var date) ? "Enter a valid date"
+            : !InRange(date) ? "Date is in a locked month"
+            : null;
         var amountError = TryAmount(State.AmountText, out var magnitude) ? null : "Enter an amount greater than zero";
         var descriptionError = string.IsNullOrWhiteSpace(State.Description) ? "Enter a description" : null;
 
-        if (amountError is not null || descriptionError is not null)
+        if (dateError is not null || amountError is not null || descriptionError is not null)
         {
             SetState(s =>
             {
+                s.DateError = dateError;
                 s.AmountError = amountError;
                 s.DescriptionError = descriptionError;
             });
@@ -212,10 +351,10 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
         }
 
         var signed = State.IsIncome ? magnitude : -magnitude;
-        account.AddTransaction(State.Date, signed, State.Description.Trim());
+        account.AddTransaction(date, signed, State.Description.Trim());
 
         await DismissKeyboardThenPop();
-        Props.OnClosed?.Invoke(new TransactionOutcome(TransactionResult.Saved, State.Date));
+        Props.OnClosed?.Invoke(new TransactionOutcome(TransactionResult.Saved, date));
     }
 
     // Dismiss the soft keyboard and let it finish animating away before popping — otherwise the reappearing shell is
@@ -250,4 +389,13 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
 #endif
         return false;
     }
+
+#if ANDROID
+    // Cancels the open calendar dialog on hardware back. Registered disabled; armed only while the dialog is open,
+    // so a closed-dialog back falls through to the normal page pop.
+    private sealed class CalendarBackCallback(Action onBack) : AndroidX.Activity.OnBackPressedCallback(enabled: false)
+    {
+        public override void HandleOnBackPressed() => onBack();
+    }
+#endif
 }

@@ -22,6 +22,8 @@
     <Compile Include="..\Mobiorum.Material3\Controls\Tabs\StripWindow.cs" LinkBase="Tabs" />
     <Compile Include="..\Mobiorum.Material3\Controls\Tabs\StripTransition.cs" LinkBase="Tabs" />
     <Compile Include="..\Mobiorum.Material3\Controls\Tabs\CarouselSettle.cs" LinkBase="Tabs" />
+    <!-- CalendarGrid is the pure, MauiReactor-/Core-free month-grid maths behind the Calendar control (ADR-0006). -->
+    <Compile Include="..\Mobiorum.Material3\Controls\CalendarGrid.cs" LinkBase="Controls" />
   </ItemGroup>
 
   <ItemGroup>
