@@ -18,6 +18,8 @@
     <Compile Include="..\MMoney.App\Ledger\MonthLedger.cs" LinkBase="Ledger" />
     <!-- DateEntry is the pure mask/parse/format logic behind the transaction date field (ADR-0006). -->
     <Compile Include="..\MMoney.App\Input\DateEntry.cs" LinkBase="Input" />
+    <!-- RepeatEditing is the pure Monthly-options / preset / coercion logic behind the repeat picker (ADR-0007). -->
+    <Compile Include="..\MMoney.App\Repeat\RepeatEditing.cs" LinkBase="Repeat" />
   </ItemGroup>
 
   <ItemGroup>

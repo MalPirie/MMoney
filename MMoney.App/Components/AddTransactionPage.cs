@@ -9,7 +9,9 @@ using Microsoft.Maui.Graphics;
 using MauiReactor;
 using Mobiorum.Material3;
 using MMoney.App.Input;
+using MMoney.App.Repeat;
 using MMoney.Core;
+using MMoney.Core.Repeat;
 
 namespace MMoney.App.Components;
 
@@ -49,6 +51,13 @@ internal sealed class AddTransactionState
     public string? AmountError { get; set; }
     public string? DescriptionError { get; set; }
     public bool CalendarOpen { get; set; } // whether the M3 calendar dialog is showing (ADR-0006)
+
+    // Repeat rule (§8): the committed strategy/end, plus the session's pinned custom slot and the preset-dialog flag.
+    public RepeatStrategy Strategy { get; set; } = new RepeatStrategy.Never();
+    public RepeatEndCondition EndCondition { get; set; } = new RepeatEndCondition.Forever();
+    public RepeatStrategy? CustomStrategy { get; set; }
+    public RepeatEndCondition? CustomEnd { get; set; }
+    public bool RepeatDialogOpen { get; set; }
 }
 
 /// <summary>
@@ -63,46 +72,12 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
 {
     private static readonly CultureInfo Gb = CultureInfo.GetCultureInfo("en-GB");
 
-#if ANDROID
-    // Android hardware-back handler: while enabled it cancels the open calendar dialog instead of letting back pop
-    // the whole page (ADR-0006). MauiReactor 4.0.15 exposes no page back hook, so we drive it at the platform layer.
-    private CalendarBackCallback? _backCallback;
-#endif
-
     protected override void OnMounted()
     {
         State.Manager = Services.GetRequiredService<AccountManager>();
         State.Date = State.Manager.Today;
         State.DateText = DateEntry.Format(State.Date);
-
-#if ANDROID
-        if (Microsoft.Maui.ApplicationModel.Platform.CurrentActivity is AndroidX.Activity.ComponentActivity activity)
-        {
-            _backCallback = new CalendarBackCallback(CancelCalendar);
-            activity.OnBackPressedDispatcher.AddCallback(_backCallback);
-        }
-#endif
         base.OnMounted();
-    }
-
-    protected override void OnWillUnmount()
-    {
-#if ANDROID
-        _backCallback?.Remove();
-        _backCallback = null;
-#endif
-        base.OnWillUnmount();
-    }
-
-    // Enable back-interception only while the dialog is open, so a closed-dialog back still pops the page normally.
-    private void SetBackInterception(bool enabled)
-    {
-#if ANDROID
-        if (_backCallback is not null)
-        {
-            _backCallback.Enabled = enabled;
-        }
-#endif
     }
 
     public override VisualNode Render()
@@ -152,14 +127,19 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
                         RepeatField(scheme)
                     ).Spacing(20).Padding(16)
                 ).GridRow(1),
+            // Modal dialogs (ADR-0007): each ModalHost stays in the tree spanning both rows, shows its scrim + centred
+            // surface only while open, and owns the Android-back-to-dismiss. The surface mounts fresh on open.
+            new ModalHost()
+                .IsOpen(State.CalendarOpen)
+                .OnDismiss(CancelCalendar)
+                .Content(CalendarSurface())
+                .GridRowSpan(2),
+            new ModalHost()
+                .IsOpen(State.RepeatDialogOpen)
+                .OnDismiss(CloseRepeatDialog)
+                .Content(RepeatDialog())
+                .GridRowSpan(2),
         };
-
-        // The M3 calendar dialog is the app's first modal overlay (ADR-0006): a dimmed scrim + centred card layered
-        // over the page's rows, hosted here on the pushed page (not the shell), and in the tree only while open.
-        if (State.CalendarOpen)
-        {
-            content.Add(CalendarOverlay(scheme).GridRowSpan(2));
-        }
 
         return ContentPage(
             Grid("Auto,*", "*", [.. content])
@@ -177,23 +157,147 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
 
     private bool InRange(DateOnly date) => MinDate() is not { } min || date >= min;
 
-    // The scrim + centred Calendar. Star tracks around an Auto centre cell centre the card (HCenter/VCenter don't
-    // apply to a Component's root; GridRow/GridColumn placement does — ADR-0004).
-    private VisualNode CalendarOverlay(MaterialScheme scheme) =>
-        Grid("*,Auto,*", "*,Auto,*",
-            Border()
-                .BackgroundColor(Colors.Black.WithAlpha(0.32f)) // M3 modal scrim
-                .StrokeThickness(0)
-                .OnTapped(CancelCalendar)
-                .GridRowSpan(3).GridColumnSpan(3),
-            new Mobiorum.Material3.Calendar()
-                .SelectedDate(State.Date)
-                .MinDate(MinDate())
-                .Today(State.Manager?.Today ?? DateOnly.FromDateTime(DateTime.Today))
-                .OnConfirm(ConfirmCalendar)
-                .OnCancel(CancelCalendar)
-                .GridRow(1).GridColumn(1)
-        );
+    // The Calendar surface (ModalHost supplies the scrim + centring + back-to-dismiss).
+    private VisualNode CalendarSurface() =>
+        new Mobiorum.Material3.Calendar()
+            .SelectedDate(State.Date)
+            .MinDate(MinDate())
+            .Today(State.Manager?.Today ?? DateOnly.FromDateTime(DateTime.Today))
+            .OnConfirm(ConfirmCalendar)
+            .OnCancel(CancelCalendar);
+
+    // ---- repeat rule (§8) --------------------------------------------------------------------------------
+
+    private DateOnly Today() => State.Manager?.Today ?? DateOnly.FromDateTime(DateTime.Today);
+
+    // The Repeat field: the current rule's summary in the outlined frame, tappable (with a dropdown affordance) to
+    // open the preset dialog.
+    private VisualNode RepeatField(MaterialScheme scheme) =>
+        new TextField()
+            .Label("Repeat")
+            .Content(
+                Grid(
+                    Label(RepeatSummary()).FontSize(16).TextColor(scheme.OnSurface).VCenter()
+                ).OnTapped(OpenRepeatDialog)
+            )
+            .Trailing(
+                Grid(
+                    Label(MaterialSymbols.ArrowDropDown)
+                        .FontFamily(MaterialSymbols.FontFamily).FontSize(22)
+                        .TextColor(scheme.OnSurfaceVariant).VCenter()
+                ).OnTapped(OpenRepeatDialog)
+            );
+
+    // The committed rule as human text (origin-relative — see RepeatDescription), with a leading capital.
+    private string RepeatSummary() =>
+        Capitalize(RepeatDescription.Describe(State.Strategy, State.Date)
+            + RepeatDescription.DescribeEndCondition(State.EndCondition, null));
+
+    private static string Capitalize(string text) =>
+        text.Length == 0 ? text : char.ToUpperInvariant(text[0]) + text[1..];
+
+    // The preset choices, custom slot first when one exists, then the five defaults and "Custom…".
+    private sealed record RepeatChoice(string Label, RepeatStrategy? Strategy, RepeatEndCondition? End, bool OpensEditor);
+
+    private List<RepeatChoice> RepeatChoices()
+    {
+        var forever = new RepeatEndCondition.Forever();
+        var choices = new List<RepeatChoice>();
+        if (State.CustomStrategy is not null && State.CustomEnd is not null)
+        {
+            var label = Capitalize(RepeatDescription.Describe(State.CustomStrategy, State.Date)
+                + RepeatDescription.DescribeEndCondition(State.CustomEnd, null));
+            choices.Add(new RepeatChoice(label, State.CustomStrategy, State.CustomEnd, false));
+        }
+
+        choices.Add(new RepeatChoice("Does not repeat", new RepeatStrategy.Never(), forever, false));
+        choices.Add(new RepeatChoice("Every day", RepeatEditing.EveryDay(), forever, false));
+        choices.Add(new RepeatChoice("Every week", RepeatEditing.EveryWeek(State.Date), forever, false));
+        choices.Add(new RepeatChoice("Every month", RepeatEditing.EveryMonth(), forever, false));
+        choices.Add(new RepeatChoice("Every year", RepeatEditing.EveryYear(), forever, false));
+        choices.Add(new RepeatChoice("Custom…", null, null, true));
+        return choices;
+    }
+
+    // Which radio is pre-selected: the choice whose rule equals the committed one; else "Does not repeat".
+    private int SelectedRepeatIndex(List<RepeatChoice> choices)
+    {
+        var index = choices.FindIndex(c => !c.OpensEditor && c.Strategy == State.Strategy && c.End == State.EndCondition);
+        return index >= 0 ? index : choices.FindIndex(c => c.Strategy is RepeatStrategy.Never);
+    }
+
+    private VisualNode RepeatDialog()
+    {
+        var choices = RepeatChoices();
+        return new ChoiceDialog()
+            .Title("Repeat")
+            .Options([.. choices.Select(c => c.Label)])
+            .SelectedIndex(SelectedRepeatIndex(choices))
+            .OnConfirm(ApplyRepeatChoice)
+            .OnCancel(CloseRepeatDialog);
+    }
+
+    private void OpenRepeatDialog()
+    {
+        HideKeyboard();
+        SetState(s => s.RepeatDialogOpen = true);
+    }
+
+    private void CloseRepeatDialog() => SetState(s => s.RepeatDialogOpen = false);
+
+    // OK on a preset/custom applies it; OK on "Custom…" pushes the editor.
+    private void ApplyRepeatChoice(int index)
+    {
+        var choice = RepeatChoices()[index];
+        if (choice.OpensEditor)
+        {
+            OpenRepeatEditor();
+            return;
+        }
+
+        SetState(s =>
+        {
+            s.Strategy = choice.Strategy!;
+            s.EndCondition = choice.End!;
+            s.RepeatDialogOpen = false;
+        });
+    }
+
+    // Push the §8 editor, seeded from the committed rule (or Monthly when currently non-repeating).
+    private void OpenRepeatEditor()
+    {
+        SetState(s => s.RepeatDialogOpen = false);
+
+        var seedStrategy = State.Strategy is RepeatStrategy.Never ? RepeatEditing.EveryMonth() : State.Strategy;
+        var seedEnd = State.Strategy is RepeatStrategy.Never ? new RepeatEndCondition.Forever() : State.EndCondition;
+
+        _ = Navigation?.PushAsync<RepeatStrategyPage, RepeatStrategyProps>(p =>
+        {
+            p.Origin = State.Date;
+            p.MinDate = MinDate();
+            p.Today = Today();
+            p.Strategy = seedStrategy;
+            p.EndCondition = seedEnd;
+            p.OnClosed = OnRepeatEditorClosed;
+        });
+    }
+
+    // Done on the editor: apply the custom rule and pin it as the session's custom slot. Cancel returns null.
+    private void OnRepeatEditorClosed((RepeatStrategy Strategy, RepeatEndCondition End)? result)
+    {
+        if (result is not { } rule)
+        {
+            return;
+        }
+
+        SetState(s =>
+        {
+            s.Strategy = rule.Strategy;
+            s.EndCondition = rule.End;
+            s.CustomStrategy = rule.Strategy;
+            s.CustomEnd = rule.End;
+        });
+    }
 
     // The dual-mode date field (ADR-0006): the outlined TextField in text mode for manual dd/MM/yyyy entry, with a
     // trailing calendar button that opens the M3 Calendar dialog. The weekday rides as the supporting hint (yielding
@@ -223,18 +327,6 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
                     .OnClicked(OpenCalendar)
             );
 
-    // The Repeat field is a disabled placeholder for now — it will open the §8 repeat-strategy page in a later slice.
-    // Its static "Does not repeat" value rides the same outlined frame via the Content slot.
-    private static VisualNode RepeatField(MaterialScheme scheme) =>
-        new TextField()
-            .Label("Repeat")
-            .Content(
-                Label("Does not repeat")
-                    .FontSize(16)
-                    .TextColor(scheme.OnSurfaceVariant)
-                    .VCenter()
-            );
-
     // Mask to dd/MM/yyyy as typed; live-commit on a complete, in-range date (keeping the last-good Date otherwise)
     // and clear the error once valid. The below-lock / incomplete cases are surfaced on Save, per the page's pattern.
     private void OnDateChanged(string text)
@@ -251,11 +343,10 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
         });
     }
 
-    // Open the calendar dialog; dismiss the soft keyboard first so it doesn't fight the modal, and arm hardware-back.
+    // Open the calendar dialog; dismiss the soft keyboard first so it doesn't fight the modal (ModalHost owns back).
     private void OpenCalendar()
     {
         HideKeyboard();
-        SetBackInterception(true);
         SetState(s =>
         {
             s.CalendarOpen = true;
@@ -263,16 +354,10 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
         });
     }
 
-    private void CancelCalendar()
-    {
-        SetBackInterception(false);
-        SetState(s => s.CalendarOpen = false);
-    }
+    private void CancelCalendar() => SetState(s => s.CalendarOpen = false);
 
     // OK: the picked date overwrites both the committed value and the text buffer, and closes the dialog.
-    private void ConfirmCalendar(DateOnly date)
-    {
-        SetBackInterception(false);
+    private void ConfirmCalendar(DateOnly date) =>
         SetState(s =>
         {
             s.Date = date;
@@ -280,7 +365,6 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
             s.DateError = null;
             s.CalendarOpen = false;
         });
-    }
 
     // Strip any minus as typed (unsigned magnitude — sign is the toggle's job) and clear the error once valid.
     private void OnAmountChanged(string text)
@@ -351,7 +435,10 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
         }
 
         var signed = State.IsIncome ? magnitude : -magnitude;
-        account.AddTransaction(date, signed, State.Description.Trim());
+        // Never → a plain one-off (null strategy); any real rule → the sequence.
+        var strategy = State.Strategy is RepeatStrategy.Never ? null : State.Strategy;
+        var endCondition = strategy is null ? null : State.EndCondition;
+        account.AddTransaction(date, signed, State.Description.Trim(), strategy, endCondition);
 
         await DismissKeyboardThenPop();
         Props.OnClosed?.Invoke(new TransactionOutcome(TransactionResult.Saved, date));
@@ -373,29 +460,5 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
     }
 
     // Hides the soft keyboard; returns whether anything was focused (i.e. the keyboard was up).
-    private static bool HideKeyboard()
-    {
-#if ANDROID
-        var activity = Microsoft.Maui.ApplicationModel.Platform.CurrentActivity;
-        var focus = activity?.CurrentFocus;
-        if (activity is not null && focus is not null)
-        {
-            var imm = (Android.Views.InputMethods.InputMethodManager?)
-                activity.GetSystemService(Android.Content.Context.InputMethodService);
-            imm?.HideSoftInputFromWindow(focus.WindowToken, Android.Views.InputMethods.HideSoftInputFlags.None);
-            focus.ClearFocus();
-            return true;
-        }
-#endif
-        return false;
-    }
-
-#if ANDROID
-    // Cancels the open calendar dialog on hardware back. Registered disabled; armed only while the dialog is open,
-    // so a closed-dialog back falls through to the normal page pop.
-    private sealed class CalendarBackCallback(Action onBack) : AndroidX.Activity.OnBackPressedCallback(enabled: false)
-    {
-        public override void HandleOnBackPressed() => onBack();
-    }
-#endif
+    private static bool HideKeyboard() => Platform.SoftKeyboard.Hide();
 }

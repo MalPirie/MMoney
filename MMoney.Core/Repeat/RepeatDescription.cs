@@ -43,6 +43,19 @@ public static class RepeatDescription
         _ => string.Empty
     };
 
+    /// <summary>
+    /// A short label for one Monthly day-in-month option relative to <paramref name="origin"/>, for the editor's
+    /// option picker — e.g. "Day 6", "First Monday", "Last Monday".
+    /// </summary>
+    public static string DescribeMonthlyOption(DayInMonth dayInMonth, DateOnly origin) => dayInMonth switch
+    {
+        DayInMonth.DayOfMonth => $"Day {origin.Day}",
+        _ => $"{Capitalize(FormatDayInMonth(dayInMonth))} {origin.DayOfWeek}"
+    };
+
+    private static string Capitalize(string text) =>
+        text.Length == 0 ? text : char.ToUpperInvariant(text[0]) + text[1..];
+
     private static string FormatWeeklyDays(int interval, DaysOfWeek days)
     {
         if (interval == 1)
