@@ -135,7 +135,8 @@ partial class RepeatStrategyPage : Component<RepeatStrategyState, RepeatStrategy
                 .GridRowSpan(2),
         };
 
-        return ContentPage(Grid("Auto,*", "*", [.. content])).HasNavigationBar(false);
+        // ModalAwareContentPage, not ContentPage: it routes hardware back to the open ModalHost (ADR-0007).
+        return new ModalAwareContentPage(Grid("Auto,*", "*", [.. content])).HasNavigationBar(false);
     }
 
     private static readonly string[] UnitLabels = ["Day", "Week", "Month", "Year"];

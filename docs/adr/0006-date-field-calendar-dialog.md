@@ -46,6 +46,13 @@ that ADR-0004 anticipated.
   MauiReactor hook proves awkward, we fall back to scrim-tap + Cancel only and note it (as ADR-0004 deferred
   back-to-dismiss for the menu).
 
+  > **Superseded by [ADR-0007](0007-modal-host-choice-dialog-repeat-picker.md).** This shipped against AndroidX's
+  > `OnBackPressedDispatcher` and **never actually worked on device** — MAUI pops the page without delegating to
+  > the dispatcher, so the callback never fired; the behaviour above was documented but not device-verified. The
+  > claim here that "MauiReactor 4.0.15 has no page back hook" is also wrong: MauiReactor documents a custom
+  > `ContentPage` subclass overriding `OnBackButtonPressed`, which is what ADR-0007's `ModalAwareContentPage`
+  > uses to make back-to-dismiss work for real.
+
 - **`Calendar` is a generic `Mobiorum.Material3` control; the app owns the modality.** Same split as
   `Menu`/`MenuItem`: the library owns the presentational **surface** (month grid, Monday-start single-letter
   header, blank leading/trailing days, `Primary`-filled selected cell / `Primary`-ring today, "July 2026" +

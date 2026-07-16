@@ -9,10 +9,20 @@ radio shape), and the §7 discard AlertDialog. So we extract now.
 ## Decision
 
 - **`Mobiorum.Material3.ModalHost` — the generic modal mechanism.** A dimmed scrim + a centred content child +
-  dismiss-on-scrim-tap + **Android hardware-back-to-dismiss** (moved out of `AddTransactionPage`; the library
-  already owns Android platform code). Props: `IsOpen`, the content, `OnDismiss`. It generalises ADR-0006's
-  hand-rolled per-page scrim into one control. The non-modal overflow `Menu` (transparent catcher, corner-anchored)
-  stays as it is — `ModalHost` is for centred modal dialogs only.
+  dismiss-on-scrim-tap + **hardware-back-to-dismiss** (moved out of `AddTransactionPage`). Props: `IsOpen`, the
+  content, `OnDismiss`. It generalises ADR-0006's hand-rolled per-page scrim into one control. The non-modal
+  overflow `Menu` (transparent catcher, corner-anchored) stays as it is — `ModalHost` is for centred modal
+  dialogs only. `ModalHost` itself is **platform-free**: it keeps a static stack of open dismiss handles and
+  exposes `TryDismissTopmost()`; the back press is routed in by the page (below).
+
+- **Back-to-dismiss hooks MAUI's page, not AndroidX's dispatcher.** `Mobiorum.Material3.ModalAwareContentPage` —
+  a native `ContentPage` subclass overriding `OnBackButtonPressed` to return `ModalHost.TryDismissTopmost()`,
+  surfaced to MauiReactor via `[Scaffold]` — replaces `ContentPage(...)` on any page hosting a `ModalHost`.
+  **ADR-0006's `OnBackPressedDispatcher` approach does not work and never did:** MAUI pops the page without ever
+  delegating to the dispatcher, so a callback registered there never fires however it is ordered or enabled
+  (device-verified: the callback was armed and `HasEnabledCallbacks` true, yet `HandleOnBackPressed` never ran).
+  MauiReactor's `ContentPage` exposes no back hook under a `NavigationPage`; the custom-page subclass is the
+  workaround MauiReactor documents, and it correctly supersedes ADR-0006's "MauiReactor has no page back hook".
 
 - **`Mobiorum.Material3.ChoiceDialog` — the radio-choice surface.** An optional title, a single-select radio list,
   and Cancel/OK. Presentational: the host supplies the options, the selected index, and the confirm/cancel
@@ -20,7 +30,8 @@ radio shape), and the §7 discard AlertDialog. So we extract now.
 
 - **`Calendar` is refactored onto `ModalHost`.** The hand-rolled scrim + `OnBackPressedDispatcher` code leaves
   `AddTransactionPage`; the Calendar dialog and the new dialogs then share one scrim/back implementation rather than
-  drifting. This supersedes ADR-0006's "hand-rolled per page, extract later" stance.
+  drifting. This supersedes ADR-0006's "hand-rolled per page, extract later" stance — and, because the dispatcher
+  never worked, it is what makes the Calendar's back-to-dismiss work for the first time.
 
 - **The repeat picker is two-tier (dialog → page), not a dropdown.** The Repeat field opens a `ChoiceDialog` of
   presets — **Does not repeat · Every day · Every week · Every month · Every year · Custom…** — each preset being
@@ -70,8 +81,13 @@ radio shape), and the §7 discard AlertDialog. So we extract now.
 
 ## Consequences
 
-- `ModalHost` centralises Android back-handling; a page can host several dialogs, and only the open one's back
-  callback is armed.
+- `ModalHost` centralises back-handling; a page can host several dialogs, and back always hits the innermost open
+  one (the stack is ordered by open, not by declaration). The cost is that a page hosting dialogs **must** root a
+  `ModalAwareContentPage` — a plain `ContentPage` silently falls back to popping.
+- **MauiReactor trap (device-verified):** a component's plain instance fields do **not** survive re-render —
+  MauiReactor builds a new instance each render and migrates only `State`, and `OnMounted` runs once, on the
+  first instance. Anything that must outlive a render (here the dismiss handle) belongs in `State`, and any
+  closure over a `[Prop]` must be re-pointed each render or it will invoke the discarded instance's prop.
 - Dialog open/close motion stays minimal for now (functional-first), tracked with the ADR-0004 menu-animation and
   ADR-0006 calendar-animation follow-ups.
 - If the `ComboBox` falls back to inline-expand, only that control changes; the page layout is unaffected.

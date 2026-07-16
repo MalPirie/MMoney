@@ -141,7 +141,8 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
                 .GridRowSpan(2),
         };
 
-        return ContentPage(
+        // ModalAwareContentPage, not ContentPage: it routes hardware back to the open ModalHost (ADR-0007).
+        return new ModalAwareContentPage(
             Grid("Auto,*", "*", [.. content])
         ).HasNavigationBar(false);
     }
