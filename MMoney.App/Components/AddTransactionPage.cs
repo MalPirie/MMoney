@@ -38,10 +38,18 @@ internal sealed class AddTransactionProps
     public Action<TransactionOutcome>? OnClosed { get; set; }
 
     /// <summary>
-    /// The transaction to edit, or <see langword="null"/> to add a new one. Only one-off transactions are edited
-    /// here (§7); occurrence editing needs the §8 scope dialog, so the shell only opens edit for one-offs.
+    /// The transaction to edit, or <see langword="null"/> to add a new one. For a one-off (§7) it is the transaction
+    /// itself; for an occurrence (§8) it is the tapped occurrence; for a whole-series edit it is the sequence's
+    /// origin transaction (paired with <see cref="WholeSeries"/>).
     /// </summary>
     public Transaction? Edit { get; set; }
+
+    /// <summary>
+    /// When <see langword="true"/> (and <see cref="Edit"/> is a sequence's origin transaction), edit the whole
+    /// repeating series (§8): amount, description, repeat rule, and origin date are all editable and applied
+    /// whole-series — no scope dialog. When <see langword="false"/> a sequence occurrence edits via the scope dialog.
+    /// </summary>
+    public bool WholeSeries { get; set; }
 }
 
 internal sealed class AddTransactionState
@@ -59,9 +67,10 @@ internal sealed class AddTransactionState
     public string? DescriptionError { get; set; }
     public bool CalendarOpen { get; set; } // whether the M3 calendar dialog is showing (ADR-0006)
 
-    // Occurrence editing (§8): the owning sequence when the edit target is a projected occurrence (null for a
-    // one-off), and whether the This/This-and-following/All scope dialog is showing.
+    // Sequence editing (§8): the owning sequence when the edit target belongs to one (null for a one-off), whether
+    // this is a whole-series edit (vs a single occurrence), and whether the scope dialog is showing.
     public Sequence? EditSequence { get; set; }
+    public bool WholeSeries { get; set; }
     public bool ScopeDialogOpen { get; set; }
 
     // Repeat rule (§8): the committed strategy/end, plus the session's pinned custom slot and the preset-dialog flag.
@@ -80,8 +89,10 @@ internal sealed class AddTransactionState
 /// <see cref="Account.AddTransaction"/> and edit diffs against the original into <c>ChangeTransaction*</c> calls
 /// (both auto-persist); the saved date is reported back through <c>OnClosed</c> so the shell can jump the ledger to
 /// it. Editing an occurrence (§8) routes Save through the This/This-and-following/All scope dialog for amount and
-/// description; its date and repeat rule are read-only this slice (occurrence date-move and rule changes deferred).
-/// A one-off's Repeat field is a read-only "Does not repeat". Delete / Copy are later slices.
+/// description; its date and repeat rule are read-only (occurrence date-move and rule changes deferred). A
+/// whole-series edit (§8, from the Repeating tab — <see cref="AddTransactionProps.WholeSeries"/>) keeps every field
+/// editable and applies to the series at once with no dialog. A one-off's Repeat field is a read-only "Does not
+/// repeat". Delete / Copy are later slices.
 /// </summary>
 partial class AddTransactionPage : Component<AddTransactionState, AddTransactionProps>
 {
@@ -104,10 +115,19 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
 
             var account = State.Manager.GetAccounts().FirstOrDefault();
             State.EditSequence = account?.GetSequences().FirstOrDefault(s => s.Number == edit.Sequence);
+            State.WholeSeries = Props.WholeSeries;
             if (State.EditSequence is { } seq)
             {
                 State.Strategy = seq.Strategy;
                 State.EndCondition = seq.EndCondition;
+
+                // Whole-series editing exposes the Repeat field; if the current rule isn't one of the built-in presets
+                // (e.g. specific weekdays or a bounded end), pin it as the custom slot so it shows and stays selected.
+                if (State.WholeSeries && !MatchesDefaultPreset(seq.Strategy, seq.EndCondition))
+                {
+                    State.CustomStrategy = seq.Strategy;
+                    State.CustomEnd = seq.EndCondition;
+                }
             }
         }
         else
@@ -121,9 +141,21 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
 
     private bool IsEdit => State.Edit is not null;
 
-    // Editing a projected occurrence (§8): the date and repeat rule are read-only this slice, and Save routes through
-    // the scope dialog rather than applying directly.
-    private bool IsOccurrence => State.EditSequence is not null;
+    // Editing a projected occurrence (§8): the date and repeat rule are read-only, and Save routes through the scope
+    // dialog. A whole-series edit also has a sequence but keeps every field editable and applies without a dialog.
+    private bool IsOccurrence => State.EditSequence is not null && !State.WholeSeries;
+
+    private bool IsWholeSeries => State.EditSequence is not null && State.WholeSeries;
+
+    // Whether a rule equals one of the Repeat preset defaults (all Forever-ended). Used to decide whether an existing
+    // whole-series rule needs pinning as the custom slot.
+    private bool MatchesDefaultPreset(RepeatStrategy strategy, RepeatEndCondition end) =>
+        end is RepeatEndCondition.Forever
+        && (strategy is RepeatStrategy.Never
+            || strategy == RepeatEditing.EveryDay()
+            || strategy == RepeatEditing.EveryWeek(State.Date)
+            || strategy == RepeatEditing.EveryMonth()
+            || strategy == RepeatEditing.EveryYear());
 
     public override VisualNode Render()
     {
@@ -132,7 +164,7 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
         var content = new List<VisualNode>
         {
             new TopAppBar()
-                .Title(IsEdit ? "Edit transaction" : "Add transaction")
+                .Title(IsWholeSeries ? "Edit repeating transaction" : IsEdit ? "Edit transaction" : "Add transaction")
                 .Container(scheme.Primary)
                 .OnContainer(scheme.OnPrimary)
                 .OnBack(Cancel)
@@ -232,7 +264,9 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
                 .TextColor(IsEdit ? scheme.OnSurfaceVariant : scheme.OnSurface)
                 .VCenter());
 
-        if (IsEdit)
+        // Read-only for a one-off ("Does not repeat") and for an occurrence (rule changes are the sequence's business,
+        // deferred). A whole-series edit keeps it interactive so the schedule can be changed.
+        if (IsEdit && !IsWholeSeries)
         {
             return new TextField().Label("Repeat").Content(summary);
         }
@@ -515,6 +549,15 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
         var signed = State.IsIncome ? magnitude : -magnitude;
         var description = State.Description.Trim();
 
+        // Whole-series edit (§8): amount, description, rule, and origin date all apply to the series at once — no
+        // scope dialog. State.Strategy/EndCondition carry any rule change made through the Repeat field.
+        if (IsWholeSeries && State.EditSequence is { } series)
+        {
+            ApplyWholeSeriesEdit(account, series, date, signed, description, State.Strategy, State.EndCondition);
+            await ClosePage(date);
+            return;
+        }
+
         // Editing an occurrence (§8): the change (amount/description only this slice) needs a scope — This /
         // This-and-following / All — so hand off to the scope dialog, which applies the mapping and pops. If nothing
         // actually changed, skip the dialog and just leave.
@@ -663,6 +706,53 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
     {
         account.RemoveSequence(occ, fromDate);
         account.AddTransaction(fromDate, newAmount, newDescription, seq.Strategy, seq.EndCondition);
+    }
+
+    // ---- whole-series edit (§8, from the Repeating tab) --------------------------------------------------
+
+    // Apply an edit to the whole series (app-design §8's first edit path). Everything applies from max(origin, lock):
+    // a true in-place change when the origin is editable and only the amount/description changed; otherwise a single
+    // re-issue that truncates at the cut and restarts the series with every new field (a rule change, an origin
+    // re-anchor, or a locked origin all take this path). "Does not repeat" collapses the series into a one-off.
+    private static void ApplyWholeSeriesEdit(Account account, Sequence seq, DateOnly newDate, decimal newAmount,
+        string newDescription, RepeatStrategy newStrategy, RepeatEndCondition newEnd)
+    {
+        // Any occurrence of the sequence serves as the Core handle; the origin transaction is the natural one.
+        var originTx = new Transaction(seq.Id, seq.Amount, seq.Description);
+        var editLock = account.EarliestAllowedDate;
+        var fromDate = seq.Origin > editLock ? seq.Origin : editLock;
+
+        var dateChanged = newDate != seq.Origin;
+        var ruleChanged = newStrategy != seq.Strategy || newEnd != seq.EndCondition;
+
+        if (!dateChanged && !ruleChanged && fromDate == seq.Origin)
+        {
+            // Editable origin, amount/description only: change in place, keeping the sequence number and overrides.
+            if (newAmount != seq.Amount)
+            {
+                account.ChangeSequenceAmount(originTx, seq.Origin, newAmount);
+            }
+
+            if (newDescription != seq.Description)
+            {
+                account.ChangeSequenceDescription(originTx, seq.Origin, newDescription);
+            }
+
+            return;
+        }
+
+        // Re-issue once from the (clamped) new origin, carrying every field. One RemoveSequence + AddTransaction, not
+        // chained ChangeSequence* calls, so a combined rule/date/amount change can't split the sequence more than once.
+        var anchor = dateChanged ? (newDate > editLock ? newDate : editLock) : fromDate;
+        account.RemoveSequence(originTx, fromDate);
+        if (newStrategy is RepeatStrategy.Never)
+        {
+            account.AddTransaction(anchor, newAmount, newDescription); // the series became a one-off
+        }
+        else
+        {
+            account.AddTransaction(anchor, newAmount, newDescription, newStrategy, newEnd);
+        }
     }
 
     // Dismiss the soft keyboard and let it finish animating away before popping — otherwise the reappearing shell is

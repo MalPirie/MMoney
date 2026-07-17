@@ -330,7 +330,7 @@ partial class ShellPage : Component<ShellState>
             )
             .Padding(16, 12)
             .ColumnSpacing(16)
-            .OnTapped(() => { }); // whole-series edit is §8
+            .OnTapped(() => OpenWholeSeries(seq)); // whole-series edit (§8)
     }
 
     // ---- chrome ------------------------------------------------------------------------------------------
@@ -408,6 +408,16 @@ partial class ShellPage : Component<ShellState>
         _ = Navigation?.PushAsync<AddTransactionPage, AddTransactionProps>(props =>
         {
             props.Edit = transaction;
+            props.OnClosed = OnTransactionClosed;
+        });
+
+    // Push the editor in whole-series mode (§8), seeded from the sequence's origin transaction. Every field is
+    // editable and the change applies to the whole series (no scope dialog).
+    private void OpenWholeSeries(Sequence sequence) =>
+        _ = Navigation?.PushAsync<AddTransactionPage, AddTransactionProps>(props =>
+        {
+            props.Edit = new Transaction(sequence.Id, sequence.Amount, sequence.Description);
+            props.WholeSeries = true;
             props.OnClosed = OnTransactionClosed;
         });
 
