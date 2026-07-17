@@ -221,11 +221,11 @@ partial class ShellPage : Component<ShellState>
             )
             .Padding(8, 12, 16, 12);
 
-        // Only one-off rows open the editor (§7). Occurrence editing needs the §8 scope dialog, and a carried-balance
-        // row is not a real transaction — both stay non-tappable for now.
-        return entry.Kind == LedgerEntryKind.OneOff
-            ? row.OnTapped(() => OpenEdit(entry.Transaction))
-            : row;
+        // One-offs (§7) and occurrences (§8) open the editor; a carried-balance row is not a real transaction, so it
+        // stays non-tappable. Occurrence edits route through the scope dialog inside the editor.
+        return entry.Kind == LedgerEntryKind.CarriedBalance
+            ? row
+            : row.OnTapped(() => OpenEdit(entry.Transaction));
     }
 
     // Description wraps to two lines then truncates. On an occurrence a muted repeat glyph is an INLINE trailing span
@@ -402,8 +402,8 @@ partial class ShellPage : Component<ShellState>
     private void OpenAdd() =>
         _ = Navigation?.PushAsync<AddTransactionPage, AddTransactionProps>(props => props.OnClosed = OnTransactionClosed);
 
-    // Push the same page in edit mode (§7), seeded from the tapped one-off. On save it jumps the ledger to the
-    // (possibly changed) date via the same OnClosed callback the add flow uses.
+    // Push the same page in edit mode, seeded from the tapped transaction — a one-off (§7) or an occurrence (§8, where
+    // Save routes through the scope dialog). On save it jumps the ledger to the date via the same OnClosed callback.
     private void OpenEdit(Transaction transaction) =>
         _ = Navigation?.PushAsync<AddTransactionPage, AddTransactionProps>(props =>
         {
