@@ -36,11 +36,18 @@ internal sealed class AddTransactionProps
 {
     /// <summary>Invoked as the page closes, reporting what it did so the shell can react.</summary>
     public Action<TransactionOutcome>? OnClosed { get; set; }
+
+    /// <summary>
+    /// The transaction to edit, or <see langword="null"/> to add a new one. Only one-off transactions are edited
+    /// here (§7); occurrence editing needs the §8 scope dialog, so the shell only opens edit for one-offs.
+    /// </summary>
+    public Transaction? Edit { get; set; }
 }
 
 internal sealed class AddTransactionState
 {
     public AccountManager? Manager { get; set; }
+    public Transaction? Edit { get; set; }         // the one-off being edited (null in add mode)
     public DateOnly Date { get; set; }             // the committed (last-good) date
     public string DateText { get; set; } = string.Empty; // the date field's raw/masked text buffer
     public string AmountText { get; set; } = string.Empty;
@@ -61,12 +68,14 @@ internal sealed class AddTransactionState
 }
 
 /// <summary>
-/// The Add-transaction page (app-design §7, first slice): a one-off transaction pushed from the FAB onto the nav
-/// stack (ADR-0005). Fields — Date (defaults today, ≥ edit lock), Amount (unsigned magnitude), Description, and
-/// the income/expense <see cref="LabeledToggle"/> — with validate-on-save shown as inline field errors. On save it
-/// calls <see cref="Account.AddTransaction"/> (which auto-persists) and reports the saved date back through
-/// <c>OnClosed</c> so the shell can jump the ledger to it. Repeat is pinned to "Does not repeat" (the §8 strategy
-/// page is deferred), and Edit / Delete / Copy are later slices.
+/// The Add/Edit-transaction page (app-design §7): a transaction pushed onto the nav stack (ADR-0005) either from the
+/// FAB (add) or by tapping a one-off ledger row (edit, when <see cref="AddTransactionProps.Edit"/> is set). Fields —
+/// Date (defaults today, ≥ edit lock), Amount (unsigned magnitude), Description, and the income/expense
+/// <see cref="LabeledToggle"/> — with validate-on-save shown as inline field errors. On save, add calls
+/// <see cref="Account.AddTransaction"/> and edit diffs against the original into <c>ChangeTransaction*</c> calls
+/// (both auto-persist); the saved date is reported back through <c>OnClosed</c> so the shell can jump the ledger to
+/// it. In edit mode the Repeat field is a read-only summary — a one-off carries no rule, and occurrence/repeat-rule
+/// editing (with the This/This-and-following/All scope dialog) is deferred to §8. Delete / Copy are later slices.
 /// </summary>
 partial class AddTransactionPage : Component<AddTransactionState, AddTransactionProps>
 {
@@ -75,10 +84,27 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
     protected override void OnMounted()
     {
         State.Manager = Services.GetRequiredService<AccountManager>();
-        State.Date = State.Manager.Today;
+
+        if (Props.Edit is { } edit)
+        {
+            // Edit mode (§7): seed the fields from the stored one-off. A one-off carries no repeat rule, so the
+            // Repeat field stays "Does not repeat" and read-only — changing the rule is deferred to §8.
+            State.Edit = edit;
+            State.Date = edit.Date;
+            State.AmountText = Math.Abs(edit.Amount).ToString("0.##", Gb);
+            State.IsIncome = edit.Amount > 0;
+            State.Description = edit.Description;
+        }
+        else
+        {
+            State.Date = State.Manager.Today;
+        }
+
         State.DateText = DateEntry.Format(State.Date);
         base.OnMounted();
     }
+
+    private bool IsEdit => State.Edit is not null;
 
     public override VisualNode Render()
     {
@@ -87,7 +113,7 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
         var content = new List<VisualNode>
         {
             new TopAppBar()
-                .Title("Add transaction")
+                .Title(IsEdit ? "Edit transaction" : "Add transaction")
                 .Container(scheme.Primary)
                 .OnContainer(scheme.OnPrimary)
                 .OnBack(Cancel)
@@ -171,16 +197,25 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
 
     private DateOnly Today() => State.Manager?.Today ?? DateOnly.FromDateTime(DateTime.Today);
 
-    // The Repeat field: the current rule's summary in the outlined frame, tappable (with a dropdown affordance) to
-    // open the preset dialog.
-    private VisualNode RepeatField(MaterialScheme scheme) =>
-        new TextField()
+    // The Repeat field: the current rule's summary in the outlined frame. In add mode it is tappable (with a dropdown
+    // affordance) to open the preset dialog; in edit mode it is a read-only summary — a one-off carries no rule, and
+    // changing an existing transaction's repeat rule is deferred to §8, so there is nothing to open.
+    private VisualNode RepeatField(MaterialScheme scheme)
+    {
+        var summary = Grid(
+            Label(RepeatSummary())
+                .FontSize(16)
+                .TextColor(IsEdit ? scheme.OnSurfaceVariant : scheme.OnSurface)
+                .VCenter());
+
+        if (IsEdit)
+        {
+            return new TextField().Label("Repeat").Content(summary);
+        }
+
+        return new TextField()
             .Label("Repeat")
-            .Content(
-                Grid(
-                    Label(RepeatSummary()).FontSize(16).TextColor(scheme.OnSurface).VCenter()
-                ).OnTapped(OpenRepeatDialog)
-            )
+            .Content(summary.OnTapped(OpenRepeatDialog))
             .Trailing(
                 Grid(
                     Label(MaterialSymbols.ArrowDropDown)
@@ -188,6 +223,7 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
                         .TextColor(scheme.OnSurfaceVariant).VCenter()
                 ).OnTapped(OpenRepeatDialog)
             );
+    }
 
     // The committed rule as human text (origin-relative — see RepeatDescription), with a leading capital.
     private string RepeatSummary() =>
@@ -436,13 +472,30 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
         }
 
         var signed = State.IsIncome ? magnitude : -magnitude;
-        // Never → a plain one-off (null strategy); any real rule → the sequence.
-        var strategy = State.Strategy is RepeatStrategy.Never ? null : State.Strategy;
-        var endCondition = strategy is null ? null : State.EndCondition;
-        account.AddTransaction(date, signed, State.Description.Trim(), strategy, endCondition);
+        if (State.Edit is { } original)
+        {
+            ApplyEdit(account, original, date, signed, State.Description.Trim());
+        }
+        else
+        {
+            // Never → a plain one-off (null strategy); any real rule → the sequence.
+            var strategy = State.Strategy is RepeatStrategy.Never ? null : State.Strategy;
+            var endCondition = strategy is null ? null : State.EndCondition;
+            account.AddTransaction(date, signed, State.Description.Trim(), strategy, endCondition);
+        }
 
         await DismissKeyboardThenPop();
         Props.OnClosed?.Invoke(new TransactionOutcome(TransactionResult.Saved, date));
+    }
+
+    // Applies an edit to an existing one-off by diffing against the original. Each Core method no-ops when its value
+    // is unchanged, so the calls are unconditional. Order matters: the id-preserving changes (description, amount)
+    // go first, then the date last — a date change re-keys the transaction, invalidating the original's id.
+    private static void ApplyEdit(Account account, Transaction original, DateOnly newDate, decimal newAmount, string newDescription)
+    {
+        account.ChangeTransactionDescription(original, newDescription);
+        account.ChangeTransactionAmount(original, newAmount);
+        account.ChangeTransactionDate(original, newDate);
     }
 
     // Dismiss the soft keyboard and let it finish animating away before popping — otherwise the reappearing shell is

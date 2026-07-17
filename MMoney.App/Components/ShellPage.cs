@@ -200,7 +200,7 @@ partial class ShellPage : Component<ShellState>
 
         // Columns: accent bar · gap · description(fill, wraps to 2 lines with an inline repeat glyph) · gap · amount
         // (fixed-width so amounts right-align in a tidy column).
-        return Grid("*", "4,10,*,16,96",
+        var row = Grid("*", "4,10,*,16,96",
                 Border()
                     .BackgroundColor(accent)
                     .StrokeThickness(0)
@@ -220,6 +220,12 @@ partial class ShellPage : Component<ShellState>
                 ).Spacing(2).VCenter().GridColumn(4)
             )
             .Padding(8, 12, 16, 12);
+
+        // Only one-off rows open the editor (§7). Occurrence editing needs the §8 scope dialog, and a carried-balance
+        // row is not a real transaction — both stay non-tappable for now.
+        return entry.Kind == LedgerEntryKind.OneOff
+            ? row.OnTapped(() => OpenEdit(entry.Transaction))
+            : row;
     }
 
     // Description wraps to two lines then truncates. On an occurrence a muted repeat glyph is an INLINE trailing span
@@ -395,6 +401,15 @@ partial class ShellPage : Component<ShellState>
     // and has no props hook) so the page carries the OnClosed callback that reports its outcome back to the shell.
     private void OpenAdd() =>
         _ = Navigation?.PushAsync<AddTransactionPage, AddTransactionProps>(props => props.OnClosed = OnTransactionClosed);
+
+    // Push the same page in edit mode (§7), seeded from the tapped one-off. On save it jumps the ledger to the
+    // (possibly changed) date via the same OnClosed callback the add flow uses.
+    private void OpenEdit(Transaction transaction) =>
+        _ = Navigation?.PushAsync<AddTransactionPage, AddTransactionProps>(props =>
+        {
+            props.Edit = transaction;
+            props.OnClosed = OnTransactionClosed;
+        });
 
     // When a transaction was saved, jump the ledger to its month (SetState also re-renders, so the new row shows).
     private void OnTransactionClosed(TransactionOutcome outcome)
