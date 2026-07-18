@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Microsoft.Maui;
 using Microsoft.Maui.ApplicationModel;
 using MauiReactor;
@@ -50,14 +51,44 @@ partial class SettingsPage : Component<SettingsState>
 
     // ---- About (version) ---------------------------------------------------------------------------------
 
-    private static VisualNode AboutBox(MaterialScheme scheme) =>
-        Section("About", scheme,
-            Grid("Auto", "*",
-                Label($"Version {AppInfo.Current.VersionString} ({AppInfo.Current.BuildString})")
-                    .FontSize(14)
-                    .TextColor(scheme.OnSurface)
-                    .VCenter()
-            ).Padding(16, 14)
+    private static VisualNode AboutBox(MaterialScheme scheme)
+    {
+        var rows = new List<VisualNode>
+        {
+            DetailRow("Version", $"{BuildInfo.Version} ({BuildInfo.Build})", scheme),
+        };
+
+        if (BuildInfo.BuildDate is { } built)
+        {
+            rows.Add(DetailRow("Built", built.ToLocalTime().ToString("yyyy-MM-dd HH:mm"), scheme));
+        }
+
+#if DEBUG
+        // The commit SHA identifies the exact source of a dev build; release builds omit it (design §9).
+        if (BuildInfo.CommitSha is { } sha)
+        {
+            rows.Add(DetailRow("Commit", sha, scheme));
+        }
+#endif
+
+        return Section("About", scheme,
+            VStack([.. rows]).Spacing(6).Padding(16, 14)
+        );
+    }
+
+    // One "Label — value" line in the About box: a muted key on the left, the value filling the rest.
+    private static VisualNode DetailRow(string label, string value, MaterialScheme scheme) =>
+        Grid("Auto", "90,*",
+            Label(label)
+                .FontSize(14)
+                .TextColor(scheme.OnSurfaceVariant)
+                .VCenter()
+                .GridColumn(0),
+            Label(value)
+                .FontSize(14)
+                .TextColor(scheme.OnSurface)
+                .VCenter()
+                .GridColumn(1)
         );
 
     // ---- Theme selector ----------------------------------------------------------------------------------

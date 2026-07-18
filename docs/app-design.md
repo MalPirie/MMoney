@@ -218,9 +218,9 @@ All additive; the event log stays a stable contract.
 ## 11. Parked / to review
 
 - **CSV export** and **printing** (banner overflow) — not yet designed.
-- **Settings version detail** — the Settings page (§9) shipped showing only MAUI's `AppInfo` version/build
-  string. The **SHA (debug) + build date** via SourceLink + the `BuildDate` MSBuild target + an `AppInfo`
-  accessor are **deferred** — revisit when the version footer needs to identify a specific build.
+- ~~**Settings version detail**~~ — **done.** The Settings About box now shows the build date always and the
+  commit SHA in debug builds, via SourceLink (SHA appended to `AssemblyInformationalVersion`) + a `StampBuildDate`
+  MSBuild target (`[AssemblyMetadata("BuildDate", …)]`), read through the `BuildInfo` accessor.
 - **Colour review on device** — the dark-mode chrome (light-orange banner/headers/status bar), the banner
   orange tone, and the income-green / expense-red.
 - The unified-FAB default on the Repeating tab ("Does not repeat") — left as-is.

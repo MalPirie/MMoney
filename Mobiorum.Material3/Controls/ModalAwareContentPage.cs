@@ -5,7 +5,7 @@ namespace Mobiorum.Material3.Native;
 /// <summary>
 /// A <see cref="Microsoft.Maui.Controls.ContentPage"/> that gives an open <see cref="Mobiorum.Material3.ModalHost"/>
 /// first refusal on the hardware back button — dismissing the innermost dialog instead of popping the page — and
-/// then a registered <see cref="Mobiorum.Material3.PageBackGuard"/> (e.g. an editor guarding unsaved changes).
+/// then this page's own <see cref="BackGuard"/> (e.g. an editor guarding unsaved changes).
 ///
 /// MauiReactor's own <c>ContentPage</c> exposes no back hook under a <c>NavigationPage</c>, so the override has to
 /// live on a custom native page (the pattern MauiReactor documents for hardware back). AndroidX's

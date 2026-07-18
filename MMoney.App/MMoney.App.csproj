@@ -20,6 +20,10 @@
 		<ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
 		<ApplicationVersion>1</ApplicationVersion>
 
+		<!-- SourceLink appends the commit SHA to AssemblyInformationalVersion ("<version>+<sha>"), which the
+		     Settings page reads back as the build's commit (§9). -->
+		<IncludeSourceRevisionInInformationalVersion>true</IncludeSourceRevisionInInformationalVersion>
+
 		<!-- To develop, package, and publish an app to the Microsoft Store, see: https://aka.ms/MauiTemplateUnpackaged -->
 		<WindowsPackageType>None</WindowsPackageType>
 
@@ -50,6 +54,7 @@
 		<PackageReference Include="Microsoft.Maui.Controls" Version="10.0.10" />
 		<PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.0" />
 		<PackageReference Include="Reactor.Maui" Version="4.0.15" />
+		<PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="All" />
 	</ItemGroup>
 
 	<ItemGroup Condition="'$(Configuration)'=='Debug'">
@@ -60,5 +65,17 @@
 	  <ProjectReference Include="..\MMoney.Core\MMoney.Core.csproj" />
 	  <ProjectReference Include="..\Mobiorum.Material3\Mobiorum.Material3.csproj" />
 	</ItemGroup>
+
+	<!-- Stamp the build's UTC timestamp into the assembly as [AssemblyMetadata("BuildDate", …)], read back by
+	     BuildInfo for the Settings page (§9). Deliberately non-deterministic (design §9 — accepted). Runs before
+	     the SDK turns @(AssemblyAttribute) items into generated assembly-info source. -->
+	<Target Name="StampBuildDate" BeforeTargets="CoreGenerateAssemblyInfo">
+		<ItemGroup>
+			<AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+				<_Parameter1>BuildDate</_Parameter1>
+				<_Parameter2>$([System.DateTime]::UtcNow.ToString("o"))</_Parameter2>
+			</AssemblyAttribute>
+		</ItemGroup>
+	</Target>
 
 </Project>
