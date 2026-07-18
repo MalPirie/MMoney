@@ -30,6 +30,9 @@ public sealed partial class TopAppBar : Component
     /// <summary>Invoked when the trailing action is tapped. Set via <c>.OnAction(...)</c>.</summary>
     [Prop] Action? _onAction;
 
+    /// <summary>Invoked when the trailing overflow (⋮) button is tapped; shown only when set. Set via <c>.OnOverflow(...)</c>.</summary>
+    [Prop] Action? _onOverflow;
+
     public override VisualNode Render()
     {
         var scheme = MaterialTheme.Current;
@@ -63,21 +66,41 @@ public sealed partial class TopAppBar : Component
             .Margin(_onBack is null ? 16 : 4, 0, 0, 0)
             .GridColumn(1));
 
+        // Trailing area (column 2): an optional text action (e.g. "Save") and/or an overflow (⋮) button.
+        var trailing = new List<VisualNode>();
         if (_onAction is not null && !string.IsNullOrEmpty(_actionText))
         {
-            children.Add(Button(_actionText)
+            trailing.Add(Button(_actionText)
                 .BackgroundColor(Colors.Transparent)
                 .TextColor(onContainer)
                 .FontFamily("OpenSansSemibold")
                 .FontSize(14)
                 .Padding(12, 0)
                 .VCenter()
-                .Margin(0, 0, 4, 0)
-                .OnClicked(() => _onAction?.Invoke())
-                .GridColumn(2));
+                .OnClicked(() => _onAction?.Invoke()));
         }
 
-        // Auto,*,Auto: the back icon and trailing action size to content, the title takes the middle.
+        if (_onOverflow is not null)
+        {
+            trailing.Add(Button(MaterialSymbols.MoreVert)
+                .FontFamily(MaterialSymbols.FontFamily)
+                .FontSize(24)
+                .BackgroundColor(Colors.Transparent)
+                .TextColor(onContainer)
+                .Padding(0)
+                .CornerRadius(24)
+                .WidthRequest(48)
+                .HeightRequest(48)
+                .VCenter()
+                .OnClicked(() => _onOverflow?.Invoke()));
+        }
+
+        if (trailing.Count > 0)
+        {
+            children.Add(HStack([.. trailing]).Spacing(0).VCenter().Margin(0, 0, 4, 0).GridColumn(2));
+        }
+
+        // Auto,*,Auto: the back icon and trailing area size to content, the title takes the middle.
         return Grid("64", "Auto,*,Auto", [.. children])
             .BackgroundColor(container);
     }

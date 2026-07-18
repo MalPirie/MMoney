@@ -33,6 +33,15 @@ public sealed record MaterialScheme
     public required Color Error { get; init; }
     public required Color OnError { get; init; }
 
+    /// <summary>A contrasting surface for elements that invert the theme (e.g. a Snackbar).</summary>
+    public required Color InverseSurface { get; init; }
+
+    /// <summary>Text/icons on <see cref="InverseSurface"/>.</summary>
+    public required Color InverseOnSurface { get; init; }
+
+    /// <summary>The primary tone that reads against <see cref="InverseSurface"/> (e.g. a Snackbar action).</summary>
+    public required Color InversePrimary { get; init; }
+
     /// <summary>Extended semantic colour for income (positive amounts), tuned for text on <see cref="Surface"/>.</summary>
     public required Color Income { get; init; }
 

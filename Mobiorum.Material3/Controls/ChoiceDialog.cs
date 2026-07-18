@@ -38,6 +38,9 @@ public sealed partial class ChoiceDialog : Component<ChoiceDialogState>
     /// <summary>Invoked on Cancel (the host also calls this on scrim-tap/back). Set via <c>.OnCancel(...)</c>.</summary>
     [Prop] Action? _onCancel;
 
+    /// <summary>The confirm button label (defaults to "OK"; e.g. "Change"/"Delete"). Set via <c>.ConfirmText(...)</c>.</summary>
+    [Prop] string _confirmText = "OK";
+
     protected override void OnMounted()
     {
         State.Selected = _selectedIndex;
@@ -108,7 +111,7 @@ public sealed partial class ChoiceDialog : Component<ChoiceDialogState>
     private VisualNode Actions(MaterialScheme scheme) =>
         HStack(
             TextButton("Cancel", scheme, () => _onCancel?.Invoke()),
-            TextButton("OK", scheme, () => _onConfirm?.Invoke(State.Selected))
+            TextButton(_confirmText, scheme, () => _onConfirm?.Invoke(State.Selected))
         ).Spacing(8).HEnd().Margin(0, 8, 0, 0);
 
     private static VisualNode TextButton(string text, MaterialScheme scheme, Action onClicked) =>

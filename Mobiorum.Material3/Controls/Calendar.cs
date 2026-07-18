@@ -56,6 +56,9 @@ public sealed partial class Calendar : Component<CalendarState>
     /// <summary>Invoked when Cancel is pressed (the host also calls this on scrim-tap/back). Set via <c>.OnCancel(...)</c>.</summary>
     [Prop] Action? _onCancel;
 
+    /// <summary>The confirm button label (defaults to "OK"; e.g. "Copy"). Set via <c>.ConfirmText(...)</c>.</summary>
+    [Prop] string _confirmText = "OK";
+
     protected override void OnMounted()
     {
         // Fresh mount each open (the dialog is conditionally rendered), so the draft always reseeds from the
@@ -159,7 +162,7 @@ public sealed partial class Calendar : Component<CalendarState>
     private VisualNode Actions(MaterialScheme scheme) =>
         HStack(
             TextButton("Cancel", scheme, () => _onCancel?.Invoke()),
-            TextButton("OK", scheme, () => _onConfirm?.Invoke(State.Draft))
+            TextButton(_confirmText, scheme, () => _onConfirm?.Invoke(State.Draft))
         ).Spacing(8).HEnd();
 
     // A transparent M3 text button (Primary label).

@@ -24,4 +24,6 @@ public static class MaterialSymbols
     public static readonly string Print = char.ConvertFromUtf32(0xE8AD);         // print (overflow menu)
     public static readonly string Download = char.ConvertFromUtf32(0xF090);      // download (overflow menu — Export)
     public static readonly string Settings = char.ConvertFromUtf32(0xE8B8);      // settings (overflow menu)
+    public static readonly string ContentCopy = char.ConvertFromUtf32(0xE14D);   // content_copy (edit overflow — Copy)
+    public static readonly string Delete = char.ConvertFromUtf32(0xE872);        // delete (edit overflow — Delete)
 }

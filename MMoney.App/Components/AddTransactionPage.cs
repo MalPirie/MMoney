@@ -28,8 +28,17 @@ internal enum TransactionResult
     Deleted,
 }
 
+/// <summary>
+/// Everything needed to re-create a deleted transaction as a Snackbar "Undo" (§7). Undo always <em>creates new</em>
+/// (a fresh sequence number, a detached one-off for a skipped occurrence) — never a true reversal. A null
+/// <see cref="Strategy"/> re-creates a one-off; a non-null one re-creates a sequence from <see cref="Date"/>.
+/// </summary>
+internal readonly record struct DeletedUndo(
+    DateOnly Date, decimal Amount, string Description, RepeatStrategy? Strategy, RepeatEndCondition? EndCondition);
+
 /// <summary>The outcome a transaction editor hands back through its <c>OnClosed</c> callback.</summary>
-internal readonly record struct TransactionOutcome(TransactionResult Result, DateOnly Date);
+/// <param name="Undo">Set when <see cref="TransactionResult.Deleted"/>, carrying the re-create payload for the Snackbar.</param>
+internal readonly record struct TransactionOutcome(TransactionResult Result, DateOnly Date, DeletedUndo? Undo = null);
 
 /// <summary>Props passed to a pushed <see cref="AddTransactionPage"/> (MauiReactor's props-initializer navigation).</summary>
 internal sealed class AddTransactionProps
@@ -72,6 +81,22 @@ internal sealed class AddTransactionState
     public Sequence? EditSequence { get; set; }
     public bool WholeSeries { get; set; }
     public bool ScopeDialogOpen { get; set; }
+
+    // Edit overflow (§7): the ⋮ menu, the Copy date-picker, and Delete's confirm/scope dialogs.
+    public bool OverflowOpen { get; set; }
+    public bool CopyCalendarOpen { get; set; }
+    public bool DeleteConfirmOpen { get; set; }
+    public bool DeleteScopeOpen { get; set; }
+
+    // Discard-changes guard (§7): the initial field snapshot (captured after seeding) for the dirty check and the
+    // dialog flag.
+    public bool DiscardOpen { get; set; }
+    public DateOnly InitialDate { get; set; }
+    public string InitialAmountText { get; set; } = string.Empty;
+    public string InitialDescription { get; set; } = string.Empty;
+    public bool InitialIsIncome { get; set; }
+    public RepeatStrategy InitialStrategy { get; set; } = new RepeatStrategy.Never();
+    public RepeatEndCondition InitialEndCondition { get; set; } = new RepeatEndCondition.Forever();
 
     // Repeat rule (§8): the committed strategy/end, plus the session's pinned custom slot and the preset-dialog flag.
     public RepeatStrategy Strategy { get; set; } = new RepeatStrategy.Never();
@@ -137,8 +162,27 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
         }
 
         State.DateText = DateEntry.Format(State.Date);
+
+        // Snapshot the seeded fields so back-when-dirty can tell whether anything changed (§7), and claim the
+        // hardware back button so a dirty exit shows the discard dialog instead of popping.
+        State.InitialDate = State.Date;
+        State.InitialAmountText = State.AmountText;
+        State.InitialDescription = State.Description;
+        State.InitialIsIncome = State.IsIncome;
+        State.InitialStrategy = State.Strategy;
+        State.InitialEndCondition = State.EndCondition;
+
         base.OnMounted();
     }
+
+    // Whether any field differs from its seeded value (drives the discard-changes guard).
+    private bool IsDirty =>
+        State.Date != State.InitialDate
+        || State.AmountText != State.InitialAmountText
+        || State.Description != State.InitialDescription
+        || State.IsIncome != State.InitialIsIncome
+        || State.Strategy != State.InitialStrategy
+        || State.EndCondition != State.InitialEndCondition;
 
     private bool IsEdit => State.Edit is not null;
 
@@ -175,6 +219,7 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
                 .OnBack(Cancel)
                 .ActionText("Save")
                 .OnAction(Save)
+                .OnOverflow(IsEdit ? OpenOverflow : (Action?)null) // Copy / Delete live in an overflow, edit mode only
                 .GridRow(0),
             ScrollView(
                     VStack(
@@ -226,12 +271,39 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
                 .OnDismiss(CloseScopeDialog)
                 .Content(ScopeDialog())
                 .GridRowSpan(2),
+            new ModalHost()
+                .IsOpen(State.DiscardOpen)
+                .OnDismiss(CloseDiscard)
+                .Content(DiscardDialog())
+                .GridRowSpan(2),
+            new ModalHost()
+                .IsOpen(State.CopyCalendarOpen)
+                .OnDismiss(CloseCopy)
+                .Content(CopyCalendarSurface())
+                .GridRowSpan(2),
+            new ModalHost()
+                .IsOpen(State.DeleteConfirmOpen)
+                .OnDismiss(CloseDelete)
+                .Content(DeleteDialog())
+                .GridRowSpan(2),
+            new ModalHost()
+                .IsOpen(State.DeleteScopeOpen)
+                .OnDismiss(CloseDeleteScope)
+                .Content(DeleteScopeDialog())
+                .GridRowSpan(2),
         };
 
-        // ModalAwareContentPage, not ContentPage: it routes hardware back to the open ModalHost (ADR-0007).
+        // The edit overflow (⋮) menu overlay sits on top; input-transparent while closed (ADR-0004).
+        if (IsEdit)
+        {
+            content.Add(OverflowMenu(scheme).GridRowSpan(2));
+        }
+
+        // ModalAwareContentPage, not ContentPage: it routes hardware back to the open ModalHost (ADR-0007), then to
+        // BackGuard (set fresh each render) so a dirty exit shows the discard dialog instead of popping (§7).
         return new ModalAwareContentPage(
             Grid("Auto,*", "*", [.. content])
-        ).HasNavigationBar(false);
+        ).BackGuard(HandleHardwareBack).HasNavigationBar(false);
     }
 
     // The edit-lock floor as a nullable minimum: null when no month has been closed (unbounded back), otherwise the
@@ -507,10 +579,259 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
         return false;
     }
 
-    private async void Cancel()
+    // The app-bar back arrow: guard unsaved changes with the discard dialog, otherwise just leave (§7).
+    private void Cancel()
+    {
+        if (IsDirty)
+        {
+            HideKeyboard();
+            SetState(s => s.DiscardOpen = true);
+            return;
+        }
+
+        _ = LeaveWithoutSaving();
+    }
+
+    // The hardware back button (routed here by ModalAwareContentPage once no dialog is open): consume the press to
+    // show the discard dialog when dirty; otherwise let the page pop.
+    private bool HandleHardwareBack()
+    {
+        if (!IsDirty)
+        {
+            return false;
+        }
+
+        HideKeyboard();
+        SetState(s => s.DiscardOpen = true);
+        return true;
+    }
+
+    private void CloseDiscard() => SetState(s => s.DiscardOpen = false);
+
+    // "Discard" confirms the exit; "Keep editing" is the dismiss (handled by CloseDiscard via the ModalHost).
+    private async void ConfirmDiscard()
+    {
+        SetState(s => s.DiscardOpen = false);
+        await LeaveWithoutSaving();
+    }
+
+    private VisualNode DiscardDialog() =>
+        new AlertDialog()
+            .Title("Discard changes?")
+            .Message("Your changes will be lost.")
+            .ConfirmText("Discard")
+            .DismissText("Keep editing")
+            .Destructive(true)
+            .OnConfirm(ConfirmDiscard)
+            .OnDismiss(CloseDiscard);
+
+    private async Task LeaveWithoutSaving()
     {
         await DismissKeyboardThenPop();
         Props.OnClosed?.Invoke(new TransactionOutcome(TransactionResult.None, State.Date));
+    }
+
+    // ---- edit overflow: Copy and Delete (§7) -------------------------------------------------------------
+
+    private void OpenOverflow()
+    {
+        HideKeyboard();
+        SetState(s => s.OverflowOpen = true);
+    }
+
+    private void CloseOverflow() => SetState(s => s.OverflowOpen = false);
+
+    private Mobiorum.Material3.MenuItem[] OverflowItems() =>
+    [
+        new Mobiorum.Material3.MenuItem(MaterialSymbols.ContentCopy, "Copy").OnSelected(OpenCopy),
+        new Mobiorum.Material3.MenuItem(MaterialSymbols.Delete, "Delete").OnSelected(OpenDelete),
+    ];
+
+    // The overflow overlay: a transparent tap-catcher that dismisses on an outside tap, with the Menu anchored just
+    // below the app bar on the right. Input-transparent while closed so touches pass through (ADR-0004).
+    private VisualNode OverflowMenu(MaterialScheme scheme) =>
+        Grid("56,Auto,*", "*,Auto,8",
+            Border()
+                .BackgroundColor(Colors.Transparent)
+                .StrokeThickness(0)
+                .OnTapped(CloseOverflow)
+                .GridRowSpan(3).GridColumnSpan(3),
+            new Menu()
+                .IsOpen(State.OverflowOpen)
+                .Items(OverflowItems())
+                .GridRow(1).GridColumn(1)
+        ).InputTransparent(!State.OverflowOpen);
+
+    // Copy: a date-picker whose OK reads "Copy"; it always adds a one-off on the chosen date using the form's
+    // current amount/description/sign, then pops (the original is left untouched).
+    private void OpenCopy() => SetState(s => { s.OverflowOpen = false; s.CopyCalendarOpen = true; });
+
+    private void CloseCopy() => SetState(s => s.CopyCalendarOpen = false);
+
+    private VisualNode CopyCalendarSurface() =>
+        new Mobiorum.Material3.Calendar()
+            .SelectedDate(State.Date)
+            .MinDate(MinDate())
+            .Today(Today())
+            .ConfirmText("Copy")
+            .OnConfirm(ConfirmCopy)
+            .OnCancel(CloseCopy);
+
+    private async void ConfirmCopy(DateOnly date)
+    {
+        var account = State.Manager?.GetAccounts().FirstOrDefault();
+        if (account is null || !TryAmount(State.AmountText, out var magnitude) || string.IsNullOrWhiteSpace(State.Description))
+        {
+            SetState(s => s.CopyCalendarOpen = false);
+            return;
+        }
+
+        var signed = State.IsIncome ? magnitude : -magnitude;
+        account.AddTransaction(date, signed, State.Description.Trim()); // always a one-off (§7)
+        SetState(s => s.CopyCalendarOpen = false);
+        await DismissKeyboardThenPop();
+        Props.OnClosed?.Invoke(new TransactionOutcome(TransactionResult.Saved, date));
+    }
+
+    // Delete: a one-off / whole-series goes straight to a confirm AlertDialog; an occurrence goes to the scope
+    // dialog (This / This-and-following / All), whose "Delete" button is the confirmation.
+    private void OpenDelete() =>
+        SetState(s =>
+        {
+            s.OverflowOpen = false;
+            if (IsOccurrence)
+            {
+                s.DeleteScopeOpen = true;
+            }
+            else
+            {
+                s.DeleteConfirmOpen = true;
+            }
+        });
+
+    private void CloseDelete() => SetState(s => s.DeleteConfirmOpen = false);
+
+    private VisualNode DeleteDialog() =>
+        new AlertDialog()
+            .Title(IsWholeSeries ? "Delete repeating transaction?" : "Delete transaction?")
+            .Message(DeleteSummary())
+            .ConfirmText("Delete")
+            .DismissText("Cancel")
+            .Destructive(true)
+            .OnConfirm(ConfirmDelete)
+            .OnDismiss(CloseDelete);
+
+    private string DeleteSummary()
+    {
+        if (State.Edit is not { } target)
+        {
+            return string.Empty;
+        }
+
+        var amount = target.Amount.ToString("C", Gb);
+        return IsWholeSeries
+            ? $"The whole “{target.Description}” series ({amount}) will be removed."
+            : $"“{target.Description}” ({amount}) will be deleted.";
+    }
+
+    // Confirm on the AlertDialog (one-off or whole-series only — occurrences confirm via the scope dialog).
+    private void ConfirmDelete()
+    {
+        var account = State.Manager?.GetAccounts().FirstOrDefault();
+        if (account is null || State.Edit is not { } target)
+        {
+            return;
+        }
+
+        if (IsWholeSeries && State.EditSequence is { } seq)
+        {
+            var originTx = new Transaction(seq.Id, seq.Amount, seq.Description);
+            var from = seq.Origin > account.EarliestAllowedDate ? seq.Origin : account.EarliestAllowedDate;
+            DeleteWith(() => account.RemoveSequence(originTx, from),
+                new DeletedUndo(from, seq.Amount, seq.Description, seq.Strategy, seq.EndCondition));
+        }
+        else
+        {
+            DeleteWith(() => account.RemoveTransaction(target),
+                new DeletedUndo(target.Date, target.Amount, target.Description, null, null));
+        }
+    }
+
+    private void CloseDeleteScope() => SetState(s => s.DeleteScopeOpen = false);
+
+    // The occurrence delete-scope dialog. Unlike the edit scope dialog, "This" is always offered (deleting a single
+    // occurrence never depends on a pending rule edit); This-and-following still collapses to All at the origin.
+    private VisualNode DeleteScopeDialog()
+    {
+        var choices = DeleteScopes();
+        return new ChoiceDialog()
+            .Title("Delete repeating transaction")
+            .Options([.. choices.Select(c => c.Label)])
+            .SelectedIndex(0)
+            .ConfirmText("Delete")
+            .OnConfirm(i => ApplyDeleteScope(choices[i].Scope))
+            .OnCancel(CloseDeleteScope);
+    }
+
+    private List<(string Label, EditScope Scope)> DeleteScopes()
+    {
+        var choices = new List<(string, EditScope)> { ("This transaction", EditScope.This) };
+        if (State.Edit is { } occ && State.EditSequence is { } seq && occ.Date != seq.Origin)
+        {
+            choices.Add(("This and following", EditScope.ThisAndFollowing));
+        }
+
+        choices.Add(("All in the series", EditScope.All));
+        return choices;
+    }
+
+    // Scope → Core for delete (app-design §8): This skips the occurrence (undo becomes a detached one-off); the
+    // sequence scopes remove from the occurrence or the origin (undo re-creates a fresh sequence).
+    private void ApplyDeleteScope(EditScope scope)
+    {
+        var account = State.Manager?.GetAccounts().FirstOrDefault();
+        if (account is null || State.Edit is not { } occ || State.EditSequence is not { } seq)
+        {
+            return;
+        }
+
+        switch (scope)
+        {
+            case EditScope.This:
+                DeleteWith(() => account.RemoveTransaction(occ),
+                    new DeletedUndo(occ.Date, occ.Amount, occ.Description, null, null));
+                break;
+
+            case EditScope.ThisAndFollowing:
+                DeleteWith(() => account.RemoveSequence(occ, occ.Date),
+                    new DeletedUndo(occ.Date, seq.Amount, seq.Description, seq.Strategy, seq.EndCondition));
+                break;
+
+            case EditScope.All:
+                var from = seq.Origin > account.EarliestAllowedDate ? seq.Origin : account.EarliestAllowedDate;
+                DeleteWith(() => account.RemoveSequence(occ, from),
+                    new DeletedUndo(from, seq.Amount, seq.Description, seq.Strategy, seq.EndCondition));
+                break;
+        }
+    }
+
+    // Run the removal, close the delete dialogs, pop, and report Deleted with the undo payload so the shell can raise
+    // the Snackbar. A refused removal (e.g. below the edit lock) is swallowed after closing the dialogs.
+    private async void DeleteWith(Action remove, DeletedUndo undo)
+    {
+        try
+        {
+            remove();
+        }
+        catch (Exception)
+        {
+            SetState(s => { s.DeleteConfirmOpen = false; s.DeleteScopeOpen = false; });
+            return;
+        }
+
+        SetState(s => { s.DeleteConfirmOpen = false; s.DeleteScopeOpen = false; });
+        await DismissKeyboardThenPop();
+        Props.OnClosed?.Invoke(new TransactionOutcome(TransactionResult.Deleted, undo.Date, undo));
     }
 
     private async void Save()
@@ -647,6 +968,7 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
             .Title("Change repeating transaction")
             .Options([.. choices.Select(c => c.Label)])
             .SelectedIndex(0) // default to the first (least broad) available scope
+            .ConfirmText("Change")
             .OnConfirm(i => { SetState(s => s.ScopeDialogOpen = false); _ = CommitOccurrence(choices[i].Scope); })
             .OnCancel(CloseScopeDialog);
     }

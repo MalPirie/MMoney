@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Maui;
 using MauiReactor.Shapes;
@@ -26,6 +27,12 @@ internal sealed class ShellState
 
     /// <summary>Whether the banner's overflow (three-dot) dropdown menu is open.</summary>
     public bool MenuOpen { get; set; }
+
+    /// <summary>Whether the "deleted" Snackbar is showing, its Undo payload, and a token guarding the auto-dismiss
+    /// so a later delete's timer can't hide an earlier one (§7).</summary>
+    public bool SnackbarOpen { get; set; }
+    public DeletedUndo? SnackbarUndo { get; set; }
+    public int SnackbarToken { get; set; }
 }
 
 /// <summary>
@@ -57,6 +64,7 @@ partial class ShellPage : Component<ShellState>
                 RenderCentral(scheme, account).GridRow(1),
                 RenderNavBar().GridRow(2),
                 RenderFab().GridRow(1),
+                RenderSnackbar().GridRow(1), // deleted-transaction Undo, bottom of the central area
                 RenderOverflowMenu(scheme).GridRowSpan(3) // overlay layer, on top of everything (ADR-0004)
             )
         ).HasNavigationBar(false); // we draw our own banner; the NavigationPage bar stays hidden (ADR-0005)
@@ -421,12 +429,64 @@ partial class ShellPage : Component<ShellState>
             props.OnClosed = OnTransactionClosed;
         });
 
-    // When a transaction was saved, jump the ledger to its month (SetState also re-renders, so the new row shows).
-    private void OnTransactionClosed(TransactionOutcome outcome)
+    // React to an editor closing. Saved: jump the ledger to its month. Deleted: jump to the month it was in and raise
+    // the Undo Snackbar, auto-dismissing it after ~4s unless a newer delete has replaced it (token check).
+    private async void OnTransactionClosed(TransactionOutcome outcome)
     {
         if (outcome.Result == TransactionResult.Saved)
         {
             SetState(s => s.Month = MonthOnly.FromDate(outcome.Date));
+            return;
         }
+
+        if (outcome.Result == TransactionResult.Deleted)
+        {
+            var token = State.SnackbarToken + 1;
+            SetState(s =>
+            {
+                s.Month = MonthOnly.FromDate(outcome.Date);
+                s.SnackbarOpen = true;
+                s.SnackbarUndo = outcome.Undo;
+                s.SnackbarToken = token;
+            });
+
+            await Task.Delay(4000);
+            SetState(s =>
+            {
+                if (s.SnackbarToken == token)
+                {
+                    s.SnackbarOpen = false;
+                }
+            });
+        }
+    }
+
+    // Undo re-creates the deleted transaction (a fresh sequence / detached one-off — never a true reversal, §7) and
+    // hides the Snackbar, jumping the ledger to the re-created date. The payload is captured by the render-time
+    // closure (RenderSnackbar), not read from State here — a deferred callback runs on a stale instance whose State
+    // snapshot may not carry it (the MauiReactor field-vs-State trap).
+    private void UndoDelete(DeletedUndo undo)
+    {
+        State.Manager?.GetAccounts().FirstOrDefault()
+            ?.AddTransaction(undo.Date, undo.Amount, undo.Description, undo.Strategy, undo.EndCondition);
+        SetState(s => { s.SnackbarOpen = false; s.Month = MonthOnly.FromDate(undo.Date); });
+    }
+
+    // The deleted-transaction Snackbar, pinned to the bottom of the central area (above the nav bar) via a VEnd
+    // wrapper grid — VEnd on a Component root is a no-op (ADR-0004), so it rides a grid like the FAB does. An empty
+    // node when hidden; the wrapper sizes to the bar so the ledger above stays tappable.
+    private VisualNode RenderSnackbar()
+    {
+        if (!State.SnackbarOpen || State.SnackbarUndo is not { } undo)
+        {
+            return Grid();
+        }
+
+        return Grid(
+            new Snackbar()
+                .Message("Transaction deleted")
+                .ActionText("Undo")
+                .OnAction(() => UndoDelete(undo))
+        ).VEnd();
     }
 }
