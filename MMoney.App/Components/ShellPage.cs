@@ -294,12 +294,14 @@ partial class ShellPage : Component<ShellState>
             ).Padding(24);
         }
 
+        // Each repeating transaction is its own rounded card (not one shared box), stacked with a small gap.
         return ScrollView(
-            Border(VStack([.. upcoming.Select(u => RepeatingRow(scheme, u))]).Spacing(0))
-                .BackgroundColor(scheme.SurfaceContainer)
-                .StrokeThickness(0)
-                .StrokeShape(new RoundRectangle().CornerRadius(16))
-                .Margin(16, 16, 16, 88) // bottom room so the last row clears the FAB
+            VStack([.. upcoming.Select(u =>
+                Border(RepeatingRow(scheme, u))
+                    .BackgroundColor(scheme.SurfaceContainer)
+                    .StrokeThickness(0)
+                    .StrokeShape(new RoundRectangle().CornerRadius(16))
+            )]).Spacing(8).Margin(16, 16, 16, 88) // bottom room so the last card clears the FAB
         );
     }
 

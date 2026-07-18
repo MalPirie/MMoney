@@ -312,15 +312,24 @@ public sealed partial class TabStrip<TItem> : Component<TabStripState<TItem>>
         {
             return Grid("*", "Auto,*",
                     HomeButton(scheme, home).GridColumn(0),
-                    Viewport(scheme).GridColumn(1)
+                    Viewport(scheme).GridColumn(1),
+                    Divider(scheme).GridColumnSpan(2)
                 )
                 .BackgroundColor(scheme.Surface) // M3 tabs sit on a Surface container
                 .HeightRequest(StripHeight)
                 .OnSizeChanged((Size s) => State.StripWidth = s.Width);
         }
 
-        return Grid(Viewport(scheme)).HeightRequest(StripHeight);
+        return Grid(Viewport(scheme), Divider(scheme)).HeightRequest(StripHeight);
     }
+
+    // The full-width M3 tab divider along the strip's bottom edge; the selected-tab underscore rides on top of it.
+    private static VisualNode Divider(MaterialScheme scheme) =>
+        Border()
+            .BackgroundColor(scheme.OutlineVariant)
+            .StrokeThickness(0)
+            .HeightRequest(1)
+            .VEnd();
 
     // ---- viewport + row ----------------------------------------------------------------------------------
 
@@ -474,10 +483,9 @@ public sealed partial class TabStrip<TItem> : Component<TabStripState<TItem>>
                     .VCenter()
             )
             .Padding(10)
-            .BackgroundColor(scheme.SurfaceContainer)
+            .BackgroundColor(Colors.Transparent) // a plain icon affordance on the strip — no container fill or shadow
             .StrokeThickness(0)
             .StrokeShape(new RoundRectangle().CornerRadius(StripHeight / 2))
-            .Shadow(Elevation.Level2)
             .VCenter()
             .Margin(6, 0, 6, 0)
             .OnTapped(() => SelectHome(home));

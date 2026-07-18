@@ -41,4 +41,12 @@ public static class Elevation
         .Offset(0, 4)
         .Radius(8)
         .Opacity(0.20f);
+
+    /// <summary>An upward shadow for a bar pinned to the bottom of the screen (the bottom navigation bar), so its
+    /// top edge lifts off the content that scrolls beneath it — a downward drop shadow there would fall off-screen.</summary>
+    public static MauiReactor.Shadow TopEdge => new MauiReactor.Shadow()
+        .Brush(new MauiControls.SolidColorBrush(Colors.Black))
+        .Offset(0, -2)
+        .Radius(4)
+        .Opacity(0.12f);
 }

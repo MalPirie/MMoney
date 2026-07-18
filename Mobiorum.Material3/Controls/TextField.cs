@@ -92,7 +92,9 @@ public sealed partial class TextField : Component<TextFieldState>
                 .Stroke(new MauiControls.SolidColorBrush(borderAccent))
                 .StrokeThickness(focused ? 2 : 1) // M3: outline thickens on focus (error stays thin at rest)
                 .StrokeShape(new RoundRectangle().CornerRadius(8))
-                .Padding(16, 0, _trailing is null ? 16 : 8, 0) // tighter right inset with trailing content, so it sits nearer the outline
+                // Shrink the padding by the extra 1px of stroke on focus so the total inset (stroke + padding) — and
+                // therefore the content/value position — stays put instead of nudging as the outline thickens.
+                .Padding(focused ? 15 : 16, 0, _trailing is null ? (focused ? 15 : 16) : (focused ? 7 : 8), 0)
                 .MinimumHeightRequest(56),
             Grid(Component.Label(_label).FontSize(12).TextColor(labelAccent))
                 .BackgroundColor(scheme.Surface)

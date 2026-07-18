@@ -38,7 +38,7 @@ public sealed partial class NavigationBar : Component
             _arrangement == NavArrangement.Start ? RenderStart(scheme) : RenderFill(scheme)
         )
         .BackgroundColor(scheme.SurfaceContainer)
-        .Shadow(Elevation.Level2);
+        .Shadow(Elevation.TopEdge); // lifts the bar's top edge off the content beneath (a bottom bar's shadow casts up)
     }
 
     private VisualNode RenderStart(MaterialScheme scheme) =>
