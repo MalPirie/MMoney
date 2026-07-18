@@ -121,9 +121,10 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
                 State.Strategy = seq.Strategy;
                 State.EndCondition = seq.EndCondition;
 
-                // Whole-series editing exposes the Repeat field; if the current rule isn't one of the built-in presets
-                // (e.g. specific weekdays or a bounded end), pin it as the custom slot so it shows and stays selected.
-                if (State.WholeSeries && !MatchesDefaultPreset(seq.Strategy, seq.EndCondition))
+                // Both occurrence and whole-series editing expose the Repeat field; if the current rule isn't one of
+                // the built-in presets (e.g. specific weekdays or a bounded end), pin it as the custom slot so it
+                // shows and stays selected.
+                if (!MatchesDefaultPreset(seq.Strategy, seq.EndCondition))
                 {
                     State.CustomStrategy = seq.Strategy;
                     State.CustomEnd = seq.EndCondition;
@@ -141,11 +142,15 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
 
     private bool IsEdit => State.Edit is not null;
 
-    // Editing a projected occurrence (§8): the date and repeat rule are read-only, and Save routes through the scope
-    // dialog. A whole-series edit also has a sequence but keeps every field editable and applies without a dialog.
+    // Editing a projected occurrence (§8): every field is editable (date-move and rule change included), and Save
+    // routes through the scope dialog. A whole-series edit also has a sequence but applies without a dialog.
     private bool IsOccurrence => State.EditSequence is not null && !State.WholeSeries;
 
     private bool IsWholeSeries => State.EditSequence is not null && State.WholeSeries;
+
+    // The Repeat field is read-only only for a one-off edit (a one-off has no sequence, so it stays "Does not
+    // repeat"). Add mode and any sequence edit (occurrence or whole-series) keep it interactive.
+    private bool RepeatReadOnly => IsEdit && State.EditSequence is null;
 
     // Whether a rule equals one of the Repeat preset defaults (all Forever-ended). Used to decide whether an existing
     // whole-series rule needs pinning as the custom slot.
@@ -261,12 +266,12 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
         var summary = Grid(
             Label(RepeatSummary())
                 .FontSize(16)
-                .TextColor(IsEdit ? scheme.OnSurfaceVariant : scheme.OnSurface)
+                .TextColor(RepeatReadOnly ? scheme.OnSurfaceVariant : scheme.OnSurface)
                 .VCenter());
 
-        // Read-only for a one-off ("Does not repeat") and for an occurrence (rule changes are the sequence's business,
-        // deferred). A whole-series edit keeps it interactive so the schedule can be changed.
-        if (IsEdit && !IsWholeSeries)
+        // Read-only only for a one-off ("Does not repeat"). Any sequence edit (occurrence or whole-series) keeps it
+        // interactive so the schedule can be changed.
+        if (RepeatReadOnly)
         {
             return new TextField().Label("Repeat").Content(summary);
         }
@@ -401,19 +406,6 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
     // to the error line). Tapping the entry types; tapping the button picks.
     private VisualNode DateField(MaterialScheme scheme)
     {
-        // On an occurrence the date is read-only this slice (moving a single occurrence is deferred with the rest of
-        // the date-scope semantics), shown as a muted summary with the weekday beneath.
-        if (IsOccurrence)
-        {
-            return new TextField()
-                .Label("Date")
-                .Supporting(DateEntry.Weekday(State.Date))
-                .Content(
-                    Grid(
-                        Label(State.DateText).FontSize(16).TextColor(scheme.OnSurfaceVariant).VCenter()
-                    ));
-        }
-
         return new TextField()
             .Label("Date")
             .Text(State.DateText)
@@ -558,14 +550,22 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
             return;
         }
 
-        // Editing an occurrence (§8): the change (amount/description only this slice) needs a scope — This /
-        // This-and-following / All — so hand off to the scope dialog, which applies the mapping and pops. If nothing
-        // actually changed, skip the dialog and just leave.
-        if (State.Edit is { } occ && IsOccurrence)
+        // Editing an occurrence (§8): the change needs a scope — This / This-and-following / All. If nothing changed,
+        // just leave; if only one scope applies (e.g. a rule change at the origin), apply it directly; otherwise hand
+        // off to the scope dialog.
+        if (State.Edit is { } occ && IsOccurrence && State.EditSequence is { } seq)
         {
-            if (signed == occ.Amount && description == occ.Description)
+            var ruleChanged = State.Strategy != seq.Strategy || State.EndCondition != seq.EndCondition;
+            if (signed == occ.Amount && description == occ.Description && date == occ.Date && !ruleChanged)
             {
                 await ClosePage(occ.Date);
+                return;
+            }
+
+            var scopes = AvailableScopes();
+            if (scopes.Count == 1)
+            {
+                await CommitOccurrence(scopes[0].Scope);
                 return;
             }
 
@@ -611,12 +611,26 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
     /// <summary>Which occurrences a change applies to (app-design §8's scope → Core mapping).</summary>
     private enum EditScope { This, ThisAndFollowing, All }
 
-    // The scope choices, top to bottom. At the sequence origin, This-and-following collapses into All, so it is
-    // omitted (app-design §8).
-    private List<(string Label, EditScope Scope)> ScopeChoices()
+    // The scopes offered, top to bottom, for the current edit (app-design §8). "This" is dropped when the rule
+    // changed (an occurrence has no rule of its own); "This and following" collapses into All at the origin.
+    private List<(string Label, EditScope Scope)> AvailableScopes()
     {
-        var atOrigin = State.Edit!.Date == State.EditSequence!.Origin;
-        var choices = new List<(string, EditScope)> { ("This transaction", EditScope.This) };
+        // Built every render (the scope ModalHost is always in the tree), so stay null-safe when this isn't an
+        // occurrence edit — the dialog is only ever opened for one.
+        if (State.Edit is not { } occ || State.EditSequence is not { } seq)
+        {
+            return [];
+        }
+
+        var atOrigin = occ.Date == seq.Origin;
+        var ruleChanged = State.Strategy != seq.Strategy || State.EndCondition != seq.EndCondition;
+
+        var choices = new List<(string, EditScope)>();
+        if (!ruleChanged)
+        {
+            choices.Add(("This transaction", EditScope.This));
+        }
+
         if (!atOrigin)
         {
             choices.Add(("This and following", EditScope.ThisAndFollowing));
@@ -628,56 +642,84 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
 
     private VisualNode ScopeDialog()
     {
-        var choices = ScopeChoices();
+        var choices = AvailableScopes();
         return new ChoiceDialog()
             .Title("Change repeating transaction")
             .Options([.. choices.Select(c => c.Label)])
-            .SelectedIndex(0) // default to "This transaction" — the least surprising scope
-            .OnConfirm(ApplyScopeChoice)
+            .SelectedIndex(0) // default to the first (least broad) available scope
+            .OnConfirm(i => { SetState(s => s.ScopeDialogOpen = false); _ = CommitOccurrence(choices[i].Scope); })
             .OnCancel(CloseScopeDialog);
     }
 
     private void CloseScopeDialog() => SetState(s => s.ScopeDialogOpen = false);
 
-    // OK on the scope dialog: apply the amount/description change at the chosen scope, close the dialog, and pop.
-    private async void ApplyScopeChoice(int index)
+    // Apply the occurrence edit at the chosen scope, then pop. A refused date-move (moving onto a date the sequence
+    // already holds) is the one expected failure — surface it as a date error and keep the page open.
+    private async Task CommitOccurrence(EditScope scope)
     {
         var account = State.Manager?.GetAccounts().FirstOrDefault();
         if (account is null || State.Edit is not { } occ || State.EditSequence is not { } seq
-            || !TryAmount(State.AmountText, out var magnitude))
+            || !DateEntry.TryParse(State.DateText, out var date) || !TryAmount(State.AmountText, out var magnitude))
         {
             return;
         }
 
         var signed = State.IsIncome ? magnitude : -magnitude;
-        ApplyOccurrenceEdit(account, occ, seq, ScopeChoices()[index].Scope, signed, State.Description.Trim());
+        try
+        {
+            ApplyOccurrenceScope(account, occ, seq, scope, date, signed, State.Description.Trim(),
+                State.Strategy, State.EndCondition);
+        }
+        catch (InvalidOperationException)
+        {
+            SetState(s => s.DateError = "That date already has an occurrence in this series");
+            return;
+        }
 
-        SetState(s => s.ScopeDialogOpen = false);
-        await ClosePage(occ.Date);
+        await ClosePage(date);
     }
 
-    // The §8 scope → Core mapping for an amount/description change (date and rule changes are deferred). "This" edits
-    // the single occurrence; the sequence scopes either change the rule in place (All, when the origin is editable)
-    // or re-issue the sequence from a cut point (This-and-following, or All when the origin is locked).
-    private static void ApplyOccurrenceEdit(Account account, Transaction occ, Sequence seq, EditScope scope,
-        decimal newAmount, string newDescription)
+    // The §8 scope → Core mapping, carrying every edited field (amount, description, date, rule). "This" writes
+    // per-occurrence overrides and stays linked to the sequence; the sequence scopes change the rule in place (All,
+    // amount/desc only with an editable origin) or re-issue the sequence once from a cut point.
+    private static void ApplyOccurrenceScope(Account account, Transaction occ, Sequence seq, EditScope scope,
+        DateOnly newDate, decimal newAmount, string newDescription, RepeatStrategy newStrategy, RepeatEndCondition newEnd)
     {
+        var dateChanged = newDate != occ.Date;
+        var ruleChanged = newStrategy != seq.Strategy || newEnd != seq.EndCondition;
+        var dateMovedOnly = dateChanged && !ruleChanged;
+
         switch (scope)
         {
             case EditScope.This:
-                account.ChangeTransactionDescription(occ, newDescription);
-                account.ChangeTransactionAmount(occ, newAmount);
+                // Per-occurrence overrides. Move first (it re-keys the occurrence but keeps its sequence number, so it
+                // stays linked) so a collision with a sibling aborts before any override is written.
+                var handle = occ;
+                if (dateChanged)
+                {
+                    account.ChangeTransactionDate(occ, newDate);
+                    handle = occ with { Id = occ.Id with { Date = newDate } };
+                }
+
+                account.ChangeTransactionDescription(handle, newDescription);
+                account.ChangeTransactionAmount(handle, newAmount);
                 break;
 
             case EditScope.ThisAndFollowing:
-                ReissueSequence(account, occ, seq, occ.Date, newAmount, newDescription);
+            {
+                var anchor = dateChanged ? newDate : occ.Date;
+                Reissue(account, occ, occ.Date, anchor, newAmount, newDescription,
+                    AdjustForDateMove(newStrategy, anchor, dateMovedOnly), newEnd);
                 break;
+            }
 
             case EditScope.All:
-                var fromDate = seq.Origin > account.EarliestAllowedDate ? seq.Origin : account.EarliestAllowedDate;
-                if (fromDate == seq.Origin)
+            {
+                var editLock = account.EarliestAllowedDate;
+                var fromDate = seq.Origin > editLock ? seq.Origin : editLock;
+                if (!dateChanged && !ruleChanged && fromDate == seq.Origin)
                 {
-                    // Origin editable: change the rule in place, keeping the sequence number and any overrides.
+                    // Editable origin, amount/description only: change in place, keeping the number and overrides.
                     if (newAmount != seq.Amount)
                     {
                         account.ChangeSequenceAmount(occ, seq.Origin, newAmount);
@@ -690,22 +732,48 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
                 }
                 else
                 {
-                    // Origin in a locked month: split at the edit lock, carrying both new fields at once.
-                    ReissueSequence(account, occ, seq, fromDate, newAmount, newDescription);
+                    var anchor = dateChanged ? (newDate > editLock ? newDate : editLock) : fromDate;
+                    Reissue(account, occ, fromDate, anchor, newAmount, newDescription,
+                        AdjustForDateMove(newStrategy, anchor, dateMovedOnly), newEnd);
                 }
 
                 break;
+            }
         }
     }
 
-    // Truncate the sequence at <paramref name="fromDate"/> and restart it there with the new amount/description and
-    // the same schedule. A single re-issue, rather than ChangeSequenceAmount then ChangeSequenceDescription, which
-    // would split twice (the second call would not find the occurrence the first one moved to a new sequence).
-    private static void ReissueSequence(Account account, Transaction occ, Sequence seq, DateOnly fromDate,
-        decimal newAmount, string newDescription)
+    // Truncate the sequence at <paramref name="cut"/> and restart it at <paramref name="anchor"/> with the new fields.
+    // A single re-issue (not chained ChangeSequence* calls) so a combined amount/description/rule/date change can't
+    // split the sequence more than once. A Never strategy restarts it as a plain one-off.
+    private static void Reissue(Account account, Transaction handle, DateOnly cut, DateOnly anchor,
+        decimal amount, string description, RepeatStrategy strategy, RepeatEndCondition end)
     {
-        account.RemoveSequence(occ, fromDate);
-        account.AddTransaction(fromDate, newAmount, newDescription, seq.Strategy, seq.EndCondition);
+        account.RemoveSequence(handle, cut);
+        if (strategy is RepeatStrategy.Never)
+        {
+            account.AddTransaction(anchor, amount, description);
+        }
+        else
+        {
+            account.AddTransaction(anchor, amount, description, strategy, end);
+        }
+    }
+
+    // "New day wins" for a pure date-move: a Weekly rule re-anchored onto a weekday it doesn't already cover adopts
+    // that weekday (collapsing a multi-day rule to the moved-to day). The other strategies are origin-relative and
+    // re-derive on their own; an explicit rule edit (dateMovedOnly false) is left exactly as the user set it.
+    private static RepeatStrategy AdjustForDateMove(RepeatStrategy strategy, DateOnly anchor, bool dateMovedOnly)
+    {
+        if (dateMovedOnly && strategy is RepeatStrategy.Weekly weekly)
+        {
+            var day = RepeatEditing.ToDaysOfWeek(anchor.DayOfWeek);
+            if (!weekly.Days.HasFlag(day))
+            {
+                return weekly with { Days = day };
+            }
+        }
+
+        return strategy;
     }
 
     // ---- whole-series edit (§8, from the Repeating tab) --------------------------------------------------
@@ -741,18 +809,11 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
             return;
         }
 
-        // Re-issue once from the (clamped) new origin, carrying every field. One RemoveSequence + AddTransaction, not
-        // chained ChangeSequence* calls, so a combined rule/date/amount change can't split the sequence more than once.
+        // Re-issue once from the (clamped) new origin, carrying every field (a pure date-move on a Weekly rule adopts
+        // the new weekday). One truncate-and-re-add, so a combined rule/date/amount change can't split more than once.
         var anchor = dateChanged ? (newDate > editLock ? newDate : editLock) : fromDate;
-        account.RemoveSequence(originTx, fromDate);
-        if (newStrategy is RepeatStrategy.Never)
-        {
-            account.AddTransaction(anchor, newAmount, newDescription); // the series became a one-off
-        }
-        else
-        {
-            account.AddTransaction(anchor, newAmount, newDescription, newStrategy, newEnd);
-        }
+        Reissue(account, originTx, fromDate, anchor, newAmount, newDescription,
+            AdjustForDateMove(newStrategy, anchor, dateChanged && !ruleChanged), newEnd);
     }
 
     // Dismiss the soft keyboard and let it finish animating away before popping — otherwise the reappearing shell is

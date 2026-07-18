@@ -157,16 +157,32 @@ month length.
   month (the locked past stays; the `GetSequences` "completed-before-lock" filter retires the truncated
   remnant). The origin **date is editable** (a clamped re-anchor).
 - **From a ledger occurrence → that occurrence,** with a **scope dialog** (radio: This / This-and-following /
-  All — *as appropriate*: if the occurrence is the origin, This-and-following collapses into All; a **date**
-  change is **this-occurrence only**). Cancel + a context-labelled action button (Delete / Change).
+  All — *as appropriate*). Every edited field — amount, description, **date**, and **repeat rule** — applies
+  together at the chosen scope; the action button is context-labelled (Delete / Change). Which radios appear
+  depends on the edit:
+  - **At the origin occurrence,** This-and-following collapses into **All**.
+  - **A rule (strategy/end) change drops "This"** — an occurrence has no rule of its own, so a rule change is
+    inherently a sequence operation (This-and-following / All only).
 
-**Scope → Core:**
+This follows the **Google Calendar** model. **This** is a single-occurrence exception that *stays linked to the
+sequence*: a moved/overridden occurrence keeps its sequence number — the projected date is tombstoned and the
+edited one stored in its place, so it still reads as part of the series. **This-and-following** and **All** create
+a **new sequence**: the old one is truncated at the cut and a fresh sequence carrying every edited field is added
+— a single re-issue, so a combined date+rule+amount edit never splits more than once.
 
-| Scope | Change (amount/desc/strategy) | Delete | Date |
+Because the strategies are **origin-relative** — Daily counts from the origin, and Monthly's day-of-month /
+nth-weekday and Yearly's month-and-day all derive from the origin — re-anchoring a sequence to a new date
+**re-derives** the schedule so the new date is a genuine occurrence. The sole exception is **Weekly**, whose
+`Days` are stored explicitly: a date-move onto a new weekday **adopts the new weekday** ("new day wins",
+collapsing a multi-day rule to the moved-to day); an explicit rule edit is honoured as chosen.
+
+**Scope → Core** (each cell carries the whole edit; a sequence-scope change is a single truncate-and-re-add):
+
+| Scope | Amount / description / rule | Date (re-anchor) | Delete |
 |---|---|---|---|
-| This | `ChangeTransaction*` | `RemoveTransaction` (skip) | `ChangeTransactionDate` (move) |
-| This & following | `ChangeSequence*(from = occurrence)` (split) | `RemoveSequence(from = occurrence)` | `ChangeSequenceDate(from = occurrence, newDate)` |
-| All | `ChangeSequence*(from = origin)` (in-place) | `RemoveSequence(from = origin)` | `ChangeSequenceDate(from = max(origin, lock), newDate)` |
+| This | `ChangeTransaction*` (per-occurrence override) | `ChangeTransactionDate` (moved, still linked) | `RemoveTransaction` (skip) |
+| This & following | `RemoveSequence(occurrence)` + `AddTransaction` (new sequence) | as ← re-anchored to `newDate` | `RemoveSequence(from = occurrence)` |
+| All | in-place `ChangeSequence*` (amount/desc, editable origin) else re-issue | `RemoveSequence(max(origin, lock))` + `AddTransaction(newDate)` | `RemoveSequence(from = origin)` |
 
 A single-occurrence **move onto a date already held by the same sequence** is **rejected** (the Core throws);
 the UI surfaces the refusal.
