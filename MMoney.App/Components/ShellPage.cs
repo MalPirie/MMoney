@@ -13,6 +13,7 @@ using MauiReactor.Shapes;
 using Mobiorum.Material3;
 using MMoney.App.Export;
 using MMoney.App.Ledger;
+using MMoney.App.Platform;
 using MMoney.Core;
 using MMoney.Core.Repeat;
 using MenuItem = Mobiorum.Material3.MenuItem; // disambiguate from MauiReactor.MenuItem
@@ -424,7 +425,7 @@ partial class ShellPage : Component<ShellState>
                 new Menu()
                     .IsOpen(open) // the open/close fade+scale is the control's own concern now
                     .Items([
-                        new MenuItem(MaterialSymbols.Print, "Print").OnSelected(CloseMenu),
+                        new MenuItem(MaterialSymbols.Print, "Print").OnSelected(PrintStatement),
                         new MenuItem(MaterialSymbols.Download, "Export").OnSelected(ExportCsv),
                         new MenuItem(MaterialSymbols.Settings, "Settings").OnSelected(OpenSettings)
                     ])
@@ -467,6 +468,25 @@ partial class ShellPage : Component<ShellState>
             Title = "Export transactions",
             File = new ShareFile(path),
         });
+    }
+
+    // Print the whole-account ledger via the platform print system (Android's print dialog, incl. Save as PDF).
+    // Same rows and scope as Export — only the rendering differs (a human-readable HTML statement). The overflow
+    // menu's Print item (§4).
+    private void PrintStatement()
+    {
+        CloseMenu();
+
+        var manager = State.Manager;
+        var account = manager?.GetAccounts().FirstOrDefault();
+        if (manager is null || account is null)
+        {
+            return;
+        }
+
+        var rows = LedgerExport.CollectRows(account, manager.Today);
+        var title = string.IsNullOrWhiteSpace(account.Name) ? "MMoney" : account.Name;
+        LedgerPrinter.Print(LedgerHtml.Build(rows, title, manager.Today), $"{title} statement");
     }
 
     // Dismiss the overflow menu, then push the Settings page onto the navigation stack (ADR-0005). Fire-and-forget:

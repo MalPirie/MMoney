@@ -22,6 +22,8 @@
     <Compile Include="..\MMoney.App\Repeat\RepeatEditing.cs" LinkBase="Repeat" />
     <!-- LedgerExport is the pure whole-account CSV statement builder behind the overflow Export item. -->
     <Compile Include="..\MMoney.App\Export\LedgerExport.cs" LinkBase="Export" />
+    <!-- LedgerHtml is the pure printable-statement HTML builder behind the overflow Print item. -->
+    <Compile Include="..\MMoney.App\Export\LedgerHtml.cs" LinkBase="Export" />
   </ItemGroup>
 
   <ItemGroup>
