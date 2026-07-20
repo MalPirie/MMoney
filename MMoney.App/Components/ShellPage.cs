@@ -1,12 +1,17 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Maui;
+using Microsoft.Maui.ApplicationModel.DataTransfer;
+using Microsoft.Maui.Storage;
 using MauiReactor.Shapes;
 using Mobiorum.Material3;
+using MMoney.App.Export;
 using MMoney.App.Ledger;
 using MMoney.Core;
 using MMoney.Core.Repeat;
@@ -420,7 +425,7 @@ partial class ShellPage : Component<ShellState>
                     .IsOpen(open) // the open/close fade+scale is the control's own concern now
                     .Items([
                         new MenuItem(MaterialSymbols.Print, "Print").OnSelected(CloseMenu),
-                        new MenuItem(MaterialSymbols.Download, "Export").OnSelected(CloseMenu),
+                        new MenuItem(MaterialSymbols.Download, "Export").OnSelected(ExportCsv),
                         new MenuItem(MaterialSymbols.Settings, "Settings").OnSelected(OpenSettings)
                     ])
                     .GridRow(1).GridColumn(1)
@@ -429,6 +434,40 @@ partial class ShellPage : Component<ShellState>
     }
 
     private void CloseMenu() => SetState(s => s.MenuOpen = false);
+
+    // Prefix for the exported statement's file name; the picked destination is the OS share sheet's concern.
+    private const string ExportFilePrefix = "mmoney-statement";
+
+    // Export the whole-account ledger as a CSV statement and hand it to the platform share sheet, which is what
+    // chooses where the file goes (Drive, Files, email, …). The overflow menu's Export item (§4).
+    private void ExportCsv()
+    {
+        CloseMenu();
+
+        var manager = State.Manager;
+        var account = manager?.GetAccounts().FirstOrDefault();
+        if (manager is null || account is null)
+        {
+            return;
+        }
+
+        var csv = LedgerExport.ToCsv(LedgerExport.CollectRows(account, manager.Today));
+        _ = ShareCsvAsync(csv, manager.Today);
+    }
+
+    // Write the CSV to a cache file (a UTF-8 BOM so spreadsheets detect the encoding), then raise the share sheet.
+    // Fire-and-forget from ExportCsv: the share UI owns its own lifecycle and there is no ledger state to update.
+    private static async Task ShareCsvAsync(string csv, DateOnly today)
+    {
+        // System.IO.Path fully qualified: bare Path binds MauiReactor's Component.Path() shape factory here.
+        var path = System.IO.Path.Combine(FileSystem.CacheDirectory, $"{ExportFilePrefix}-{today:yyyyMMdd}.csv");
+        await File.WriteAllTextAsync(path, csv, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+        await Share.Default.RequestAsync(new ShareFileRequest
+        {
+            Title = "Export transactions",
+            File = new ShareFile(path),
+        });
+    }
 
     // Dismiss the overflow menu, then push the Settings page onto the navigation stack (ADR-0005). Fire-and-forget:
     // the OnSelected callback is synchronous and the push manages its own transition.

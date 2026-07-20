@@ -20,6 +20,8 @@
     <Compile Include="..\MMoney.App\Input\DateEntry.cs" LinkBase="Input" />
     <!-- RepeatEditing is the pure Monthly-options / preset / coercion logic behind the repeat picker (ADR-0007). -->
     <Compile Include="..\MMoney.App\Repeat\RepeatEditing.cs" LinkBase="Repeat" />
+    <!-- LedgerExport is the pure whole-account CSV statement builder behind the overflow Export item. -->
+    <Compile Include="..\MMoney.App\Export\LedgerExport.cs" LinkBase="Export" />
   </ItemGroup>
 
   <ItemGroup>
