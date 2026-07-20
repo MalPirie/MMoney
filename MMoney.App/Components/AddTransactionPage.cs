@@ -647,10 +647,12 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
         new Mobiorum.Material3.MenuItem(MaterialSymbols.Delete, "Delete").OnSelected(OpenDelete),
     ];
 
-    // The overflow overlay: a transparent tap-catcher that dismisses on an outside tap, with the Menu anchored just
-    // below the app bar on the right. Input-transparent while closed so touches pass through (ADR-0004).
+    // The overflow overlay: a transparent tap-catcher that dismisses on an outside tap, with the Menu anchored to the
+    // overflow (⋮) button's top-right corner so it grows out of the button — matching the main page. The button is
+    // VCenter in the 64dp TopAppBar (top edge 8dp) and its trailing HStack insets it 4dp from the right, so 8dp/4dp
+    // inset tracks put the menu's top-right on it. Input-transparent while closed so touches pass through (ADR-0004).
     private VisualNode OverflowMenu(MaterialScheme scheme) =>
-        Grid("56,Auto,*", "*,Auto,8",
+        Grid("8,Auto,*", "*,Auto,4",
             Border()
                 .BackgroundColor(Colors.Transparent)
                 .StrokeThickness(0)
