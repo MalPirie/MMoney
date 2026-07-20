@@ -22,7 +22,7 @@ public class ModalAwareContentPage : Microsoft.Maui.Controls.ContentPage
     public Func<bool>? BackGuard { get; set; }
 
     protected override bool OnBackButtonPressed() =>
-        Mobiorum.Material3.ModalHost.TryDismissTopmost()
+        Mobiorum.Material3.OverlayBackStack.TryDismissTopmost()
         || (BackGuard?.Invoke() ?? false)
         || base.OnBackButtonPressed();
 }

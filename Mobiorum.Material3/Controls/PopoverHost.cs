@@ -11,6 +11,13 @@ public sealed class PopoverHostState
 {
     /// <summary>This host's top-left on screen, in DIPs — for converting the anchor into local coordinates.</summary>
     public Rect? Origin { get; set; }
+
+    /// <summary>The hardware-back dismiss handle. In <c>State</c> (not a field) so it survives MauiReactor's
+    /// per-render instance swap — a field would be null on every instance after the one <c>OnMounted</c> ran on.</summary>
+    internal OverlayDismissHandle? Handle { get; set; }
+
+    /// <summary>Whether <see cref="Handle"/> is currently on the shared back stack.</summary>
+    internal bool Armed { get; set; }
 }
 
 /// <summary>
@@ -20,8 +27,9 @@ public sealed class PopoverHostState
 /// <see cref="NativeGeometry.ScreenRect"/>); this converts it into local space using its own measured origin and
 /// places the content beneath, matched to the target's width. The origin is measured with a retrying dispatched
 /// call after layout (measuring on the render path returns null — the native view isn't realized yet), then cached
-/// since the page's top-left is stable. Dismisses on an outside tap or Android back; falls back to centring until
-/// the origin is known, so the list is never lost.
+/// since the page's top-left is stable. Dismisses on an outside tap or hardware-back (via the shared
+/// <see cref="OverlayBackStack"/>, reached through a <see cref="Native.ModalAwareContentPage"/> — the same route
+/// <see cref="ModalHost"/> uses); falls back to centring until the origin is known, so the list is never lost.
 /// </summary>
 public sealed partial class PopoverHost : Component<PopoverHostState>
 {
@@ -40,29 +48,24 @@ public sealed partial class PopoverHost : Component<PopoverHostState>
     // The full-bleed catcher's native view, measured (post-layout) for this host's on-screen origin.
     private MauiControls.Border? _catcherRef;
 
-#if ANDROID
-    private DismissBackCallback? _backCallback;
-#endif
-
     protected override void OnMounted()
     {
-#if ANDROID
-        if (Microsoft.Maui.ApplicationModel.Platform.CurrentActivity is AndroidX.Activity.ComponentActivity activity)
-        {
-            _backCallback = new DismissBackCallback(() => _onDismiss?.Invoke());
-            activity.OnBackPressedDispatcher.AddCallback(_backCallback);
-        }
-#endif
+        // Seed the back handle into State (not a field): MauiReactor swaps the instance each render and migrates
+        // only State, so a field set here would be null on every later instance. Mirrors ModalHost.
+        State.Handle = new OverlayDismissHandle();
         ScheduleMeasure(attemptsLeft: 12);
         base.OnMounted();
     }
 
     protected override void OnWillUnmount()
     {
-#if ANDROID
-        _backCallback?.Remove();
-        _backCallback = null;
-#endif
+        if (State is { Armed: true, Handle: { } handle })
+        {
+            OverlayBackStack.Remove(handle);
+            State.Armed = false;
+        }
+
+        State.Handle = null;
         base.OnWillUnmount();
     }
 
@@ -93,12 +96,25 @@ public sealed partial class PopoverHost : Component<PopoverHostState>
 
     public override VisualNode Render()
     {
-#if ANDROID
-        if (_backCallback is not null)
+        if (State.Handle is { } handle)
         {
-            _backCallback.Enabled = _isOpen;
+            // Re-point at this instance's OnDismiss each render: the closure would otherwise hold the prop of the
+            // discarded instance OnMounted ran on. Push on open / pop on close so the shared stack order matches
+            // nesting and hardware-back reaches the innermost overlay. Mirrors ModalHost.
+            handle.OnBack = () => _onDismiss?.Invoke();
+
+            if (_isOpen && !State.Armed)
+            {
+                OverlayBackStack.Push(handle);
+                State.Armed = true;
+            }
+            else if (!_isOpen && State.Armed)
+            {
+                OverlayBackStack.Remove(handle);
+                State.Armed = false;
+            }
         }
-#endif
+
         VisualNode positioned;
         if (_anchor.Width > 0 && State.Origin is { } o)
         {
@@ -126,11 +142,4 @@ public sealed partial class PopoverHost : Component<PopoverHostState>
         }
         .InputTransparent(!_isOpen);
     }
-
-#if ANDROID
-    private sealed class DismissBackCallback(Action onBack) : AndroidX.Activity.OnBackPressedCallback(enabled: false)
-    {
-        public override void HandleOnBackPressed() => onBack();
-    }
-#endif
 }
