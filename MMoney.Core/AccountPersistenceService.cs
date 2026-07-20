@@ -114,6 +114,27 @@ public sealed class AccountPersistenceService(string path, IFileSystem fileSyste
         return reloaded;
     }
 
+    /// <summary>
+    /// Creates a new account file under <paramref name="id"/> from an exported log — an admin import that adopts the
+    /// backup's identity (restoring onto a fresh install / different account). Validates first by decoding and
+    /// replaying into an <see cref="Account"/>, so a malformed or unreplayable log throws and writes nothing; also
+    /// throws if an account already exists at that id. Returns the freshly replayed account.
+    /// </summary>
+    public Account CreateFromLog(Guid id, IEnumerable<string> lines, bool ignoreMonthClosed)
+    {
+        var events = AccountEventCodec.Decode(lines).ToList();
+        var account = new Account(id, events, ignoreMonthClosed);
+
+        var fileName = MakeFileName(account);
+        if (fileSystem.File.Exists(fileName))
+        {
+            throw new InvalidOperationException("An account already exists at this id.");
+        }
+
+        fileSystem.File.WriteAllLines(fileName, AccountEventCodec.Encode(events));
+        return account;
+    }
+
     // A unique backup path: timestamp to the millisecond, with a numeric suffix only if two restores
     // land in the same millisecond, so rapid restores never clobber each other.
     private string NextBackupPath(string backupsDir, Guid id)

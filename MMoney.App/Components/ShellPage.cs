@@ -494,8 +494,30 @@ partial class ShellPage : Component<ShellState>
     private void OpenSettings()
     {
         CloseMenu();
-        _ = Navigation?.PushAsync<SettingsPage, SettingsProps>(props => props.OnChanged = OnSettingsChanged);
+        _ = Navigation?.PushAsync<SettingsPage, SettingsProps>(props =>
+        {
+            props.OnChanged = OnSettingsChanged;
+            props.OnAccountReplaced = OnAccountReplaced;
+        });
     }
+
+    // An admin import swapped the account wholesale (ADR-0008). The old shown month may not exist in the new
+    // account, so reset the view to today's month, clamped above the imported account's edit lock.
+    private void OnAccountReplaced() => SetState(s =>
+    {
+        var today = s.Manager?.Today ?? DateOnly.FromDateTime(DateTime.Today);
+        var month = MonthOnly.FromDate(today);
+        if (s.Manager?.GetAccounts().FirstOrDefault() is { } account)
+        {
+            var editLock = MonthOnly.FromDate(account.EarliestAllowedDate);
+            if (month.CompareTo(editLock) < 0)
+            {
+                month = editLock;
+            }
+        }
+
+        s.Month = month;
+    });
 
     // Settings toggled "allow closing months", which reloads every account under the new mode (collapsed vs.
     // visible-read-only). Re-render so the ledger and balances reflect it; the clamp keeps the view at/above the edit

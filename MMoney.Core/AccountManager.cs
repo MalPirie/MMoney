@@ -126,26 +126,99 @@ public sealed class AccountManager
         persistenceService.ReadRawLog(account);
 
     /// <summary>
-    /// Replaces <paramref name="target"/>'s entire history from an exported event log as part of
-    /// an admin restore. It validates and swaps the log (backing up the old one), then re-wires the
-    /// reloaded account to persistence and swaps it into the managed list. Returns the reloaded account.
-    /// Throws without changing anything if the log is invalid.
+    /// Validates an exported log and summarises it <em>without touching disk</em>, so an import can be confirmed
+    /// against what it contains. Decodes the lines (throws on a malformed line) and replays them into a throwaway
+    /// account (throws if they do not replay), then reports the event count, the account name, and the latest date
+    /// any event touches. Discards the throwaway account.
+    /// </summary>
+    public ImportPreview PreviewImport(IEnumerable<string> lines)
+    {
+        var events = AccountEventCodec.Decode(lines).ToList();
+        _ = new Account(Guid.NewGuid(), events, ignoreMonthClosed); // validates replay; the instance is discarded
+        var name = events.OfType<AccountEvent.NameSet>().LastOrDefault()?.Name ?? "(unnamed)";
+        return new ImportPreview(events.Count, name, LatestEventDate(events));
+    }
+
+    /// <summary>
+    /// Replaces <paramref name="target"/>'s entire history from an exported event log as part of an admin restore,
+    /// keeping <paramref name="target"/>'s identity. Equivalent to <see cref="ImportAccount(Account, Guid, IEnumerable{string})"/>
+    /// with the backup id equal to the target's id (the same-identity path). Throws without changing anything if the
+    /// log is invalid.
     /// </summary>
     public Account ImportAccount(Account target, IEnumerable<string> lines)
     {
-        var reloaded = persistenceService.ReplaceLog(target, lines, ignoreMonthClosed);
+        ArgumentNullException.ThrowIfNull(target);
+        return ImportAccount(target, target.Id, lines);
+    }
 
-        var index = accounts.IndexOf(target);
-        if (index >= 0)
+    /// <summary>
+    /// Imports an exported log into the account it belongs to (<paramref name="backupId"/> — the id the export was
+    /// named after). When <paramref name="backupId"/> equals <paramref name="target"/>'s id, it replaces the target's
+    /// history in place (backing up the old log). When it differs, the import <em>adopts the backup's identity</em>:
+    /// the account is created under <paramref name="backupId"/>, and <paramref name="target"/> is retired as a
+    /// recoverable deleted account — this is what lets a backup be restored onto a fresh install whose default
+    /// account has a different id. Validates before any change, so an invalid log throws and leaves everything
+    /// untouched. Returns the reloaded/created account.
+    /// </summary>
+    public Account ImportAccount(Account target, Guid backupId, IEnumerable<string> lines)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+
+        if (backupId == target.Id)
         {
-            Replace(index, target, reloaded); // in-place: keep the managed list position
-        }
-        else
-        {
-            Track(reloaded); // off-list target: adopt the reloaded account — leaving it unwired was the bug
+            var reloaded = persistenceService.ReplaceLog(target, lines, ignoreMonthClosed);
+
+            var index = accounts.IndexOf(target);
+            if (index >= 0)
+            {
+                Replace(index, target, reloaded); // in-place: keep the managed list position
+            }
+            else
+            {
+                Track(reloaded); // off-list target: adopt the reloaded account — leaving it unwired was the bug
+            }
+
+            return reloaded;
         }
 
-        return reloaded;
+        // Adopt the backup's identity: create the account under backupId (validates first, writes nothing on
+        // failure), then retire the current account as a recoverable deleted account and swap the new one in.
+        var created = persistenceService.CreateFromLog(backupId, lines, ignoreMonthClosed);
+        persistenceService.MarkAccountAsDeleted(target);
+        Untrack(target);
+        Track(created);
+        return created;
+    }
+
+    // The latest date any event touches, across every date-bearing field — a recency cue for the import summary.
+    private static DateOnly? LatestEventDate(IReadOnlyList<AccountEvent> events)
+    {
+        DateOnly? latest = null;
+        void Consider(DateOnly d)
+        {
+            if (latest is null || d > latest)
+            {
+                latest = d;
+            }
+        }
+
+        foreach (var e in events)
+        {
+            switch (e)
+            {
+                case AccountEvent.TransactionAdded t: Consider(t.Date); break;
+                case AccountEvent.TransactionAmountChanged t: Consider(t.Date); break;
+                case AccountEvent.TransactionDateChanged t: Consider(t.Date); Consider(t.NewDate); break;
+                case AccountEvent.TransactionDescriptionChanged t: Consider(t.Date); break;
+                case AccountEvent.TransactionRemoved t: Consider(t.Date); break;
+                case AccountEvent.MonthClosed t: Consider(t.Month.LastDay); break;
+                case AccountEvent.SequenceRemoved t: Consider(t.Date); Consider(t.FromDate); break;
+                case AccountEvent.SequenceAmountChanged t: Consider(t.Date); break;
+                case AccountEvent.SequenceDescriptionChanged t: Consider(t.Date); break;
+            }
+        }
+
+        return latest;
     }
 
     private void OnNewEvent(object? sender, AccountEvent e)
@@ -243,3 +316,9 @@ public sealed class AccountManager
         return candidate;
     }
 }
+
+/// <summary>
+/// A validated summary of an export log an import is about to apply, for the confirm dialog — the log is not applied
+/// to produce it. Carries the event count, the account name in the log, and the latest date any event touches.
+/// </summary>
+public sealed record ImportPreview(int EventCount, string Name, DateOnly? LatestDate);

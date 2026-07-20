@@ -146,4 +146,72 @@ public class AccountManagerTests
         var reloaded = NewManager(fileSystem).GetAccounts().Single(a => a.Id == imported.Id);
         Assert.Equal(100m, reloaded.BalanceOn(D(2026, 2, 28)));
     }
+
+    [Fact]
+    public void PreviewImport_SummarisesTheLogWithoutApplyingIt()
+    {
+        var manager = NewManager(new MockFileSystem());
+        var source = manager.AddAccount("Source");
+        source.AddTransaction(D(2026, 1, 5), 80m, "x");
+        source.AddTransaction(D(2026, 3, 20), -10m, "y");
+        var exported = manager.ExportAccount(source).ToList();
+
+        var preview = manager.PreviewImport(exported);
+
+        Assert.Equal("Source", preview.Name);
+        Assert.Equal(exported.Count, preview.EventCount); // NameSet + 2 adds
+        Assert.Equal(D(2026, 3, 20), preview.LatestDate);
+        Assert.Equal(70m, source.BalanceOn(D(2026, 3, 31))); // untouched
+    }
+
+    [Fact]
+    public void PreviewImport_ThrowsOnAMalformedLog()
+    {
+        var manager = NewManager(new MockFileSystem());
+
+        Assert.ThrowsAny<Exception>(() => manager.PreviewImport(["not json"]));
+    }
+
+    [Fact]
+    public void ImportAccount_WithDifferentBackupId_AdoptsTheIdAndRetiresTheCurrentAccount()
+    {
+        // A backup exported from one install.
+        var exportFs = new MockFileSystem();
+        var exportMgr = NewManager(exportFs);
+        var source = exportMgr.AddAccount("Phone Backup");
+        source.AddTransaction(D(2026, 1, 5), 80m, "x");
+        var backupId = source.Id;
+        var lines = exportMgr.ExportAccount(source).ToList();
+
+        // A fresh install: a default account with a different id.
+        var freshFs = new MockFileSystem();
+        var manager = NewManager(freshFs);
+        var current = manager.GetAccounts().Single();
+        Assert.NotEqual(backupId, current.Id);
+
+        var imported = manager.ImportAccount(current, backupId, lines);
+
+        Assert.Equal(backupId, imported.Id);
+        Assert.Equal("Phone Backup", imported.Name);
+        Assert.Equal(80m, imported.BalanceOn(D(2026, 1, 31)));
+        Assert.Contains(manager.GetAccounts(), a => a.Id == backupId);
+        Assert.DoesNotContain(manager.GetAccounts(), a => a.Id == current.Id);
+        Assert.Contains(manager.GetDeletedAccounts(), d => d.Id == current.Id); // retired, recoverable
+
+        // Wired + persisted: a fresh manager reload sees the adopted account and its data.
+        var reloaded = NewManager(freshFs).GetAccounts().Single(a => a.Id == backupId);
+        Assert.Equal(80m, reloaded.BalanceOn(D(2026, 1, 31)));
+    }
+
+    [Fact]
+    public void ImportAccount_WithInvalidLog_LeavesTheCurrentAccountUntouched()
+    {
+        var manager = NewManager(new MockFileSystem());
+        var current = manager.GetAccounts().Single();
+
+        Assert.ThrowsAny<Exception>(() => manager.ImportAccount(current, Guid.NewGuid(), ["not json"]));
+
+        Assert.Contains(manager.GetAccounts(), a => a.Id == current.Id);
+        Assert.Empty(manager.GetDeletedAccounts()); // nothing retired
+    }
 }
