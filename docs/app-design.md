@@ -90,8 +90,15 @@ Today-anchored and **static** (the month scroller never changes it). Amounts are
 - Built on the **synced strip + pager** (`Mobiorum.Material3`): a horizontal month strip driving a paged
   content area; tap-strip and swipe-page stay in lockstep.
   - Item source is a **navigable sequence**: `Selected` + `Next`/`Prev` (null at bounds). MMoney supplies
-    `MonthOnly`, `Next = m => m.Add(1)`, `Prev = m => m == editLockMonth ? null : m.Add(-1)` (open-ended
-    forward, bounded back at the edit lock).
+    `MonthOnly`, `Next = m => m.Add(1)` (**open-ended forward**), and a **lower bound** of
+    `max(editLockMonth, min(currentMonth, EarliestContentMonth ?? currentMonth))` — the first transaction's
+    month, but never before the edit lock and never after the current month, so a fresh/empty account (or one
+    whose only activity is in the future) still opens bounded at the current month rather than scrolling to year one.
+- **Close-month FAB (§9):** when "allow closing months" is on, the month that can be closed (the oldest open
+  month, `Account.ClosableMonth`) shows a small secondary FAB beside the add FAB that closes it.
+- **Carried-balance anchor:** the "Balance carried" opening entry (from a close) renders as its own box at the
+  foot of the month — no date header, `surfaceContainerHighest` (darker than the day boxes) — since it has no
+  real date.
 - Per month: `Account.GetMonth(month)` → `LedgerEntry` rows, **day-grouped**.
 - **Sort: date descending** (latest day on top), then **sequence descending** within a day. Implemented by
   **reversing** `GetMonth`'s ascending output — balances are computed ascending (correct), only display is
@@ -197,6 +204,14 @@ the UI surfaces the refusal.
   `[AssemblyMetadata("BuildDate", …)]` attribute (deliberately non-deterministic — accepted). Read through a
   small `AppInfo` accessor (`Version`, `CommitSha?`, `BuildDate`).
 - **Theme toggle:** tristate (System / Light / Dark), persisted.
+- **Close months:** a persisted **"Allow closing months"** switch (`MonthClosePreference`, default off), the
+  inverse of the Core's `ignoreMonthClosed` (`ignoreMonthClosed = !allowed`), applied live via
+  `AccountManager.SetIgnoreMonthClosed`.
+  - **On** → month closes are **fully processed**: a closed month collapses into a "Balance carried" anchor, and
+    the ledger offers the close-month FAB (§5) on the oldest open month.
+  - **Off** → closes are **partially processed** (sequences pruned, edit lock advanced) so past months stay
+    **visible but read-only**; no close is offered. Toggling is reversible — the `MonthClosed` events persist and
+    just replay differently, so a close is undone by turning the switch off rather than by a destructive edit.
 
 ---
 

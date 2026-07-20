@@ -44,6 +44,35 @@ public class MonthCloseTests
     }
 
     [Fact]
+    public void ClosableMonth_TracksExactlyWhatCloseMonthWouldAccept()
+    {
+        var account = NewAccount();
+        Assert.Null(account.ClosableMonth(D(2026, 3, 15))); // no activity yet
+
+        account.AddTransaction(D(2026, 1, 10), 100m, "a");
+        account.AddTransaction(D(2026, 2, 10), 50m, "b");
+
+        Assert.Equal(M(2026, 1), account.ClosableMonth(D(2026, 3, 15))); // oldest content month, in the past
+        Assert.Null(account.ClosableMonth(D(2026, 1, 15)));              // oldest activity is the current month
+
+        account.CloseMonth(M(2026, 1), D(2026, 3, 15));
+        Assert.Equal(M(2026, 2), account.ClosableMonth(D(2026, 3, 15))); // Feb is now the oldest open past month
+
+        account.CloseMonth(M(2026, 2), D(2026, 3, 15));
+        Assert.Null(account.ClosableMonth(D(2026, 3, 15)));              // only the current month remains
+    }
+
+    [Fact]
+    public void ClosableMonth_IsNullWhileShowingClosedMonths()
+    {
+        var (account, events) = Recording();
+        account.AddTransaction(D(2026, 1, 10), 100m, "a");
+        var shown = new Account(account.Id, events, ignoreMonthClosed: true);
+
+        Assert.Null(shown.ClosableMonth(D(2026, 3, 15)));
+    }
+
+    [Fact]
     public void IgnoreMonthClosed_ShowsClosedMonthsButKeepsThemReadOnly()
     {
         var (account, events) = Recording();

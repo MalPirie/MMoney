@@ -41,7 +41,7 @@ namespace MMoney.App
                 fileSystem.Directory.CreateDirectory(directory); // first run: the manager reads the dir, doesn't create it
                 return new AccountManager(
                     new AccountPersistenceService(directory, fileSystem),
-                    ignoreMonthClosed: false,
+                    ignoreMonthClosed: !MonthClosePreference.Allowed, // closing is opt-in (§9); see MonthClosePreference
                     System.TimeProvider.System);
             });
 

@@ -63,7 +63,7 @@ partial class ShellPage : Component<ShellState>
                 RenderBanner(scheme, account).GridRow(0),
                 RenderCentral(scheme, account).GridRow(1),
                 RenderNavBar().GridRow(2),
-                RenderFab().GridRow(1),
+                RenderFab(account).GridRow(1),
                 RenderSnackbar().GridRow(1), // deleted-transaction Undo, bottom of the central area
                 RenderOverflowMenu(scheme).GridRowSpan(3) // overlay layer, on top of everything (ADR-0004)
             )
@@ -127,12 +127,20 @@ partial class ShellPage : Component<ShellState>
         }
 
         var today = State.Manager?.Today ?? DateOnly.FromDateTime(DateTime.Today);
+        var currentMonth = MonthOnly.FromDate(today);
         var editLock = MonthOnly.FromDate(account.EarliestAllowedDate);
+
+        // Lower bound of the (forward-infinite) scroller: the month of the first transaction, but never before the
+        // edit lock and never after the current month — so a fresh/empty account, or one whose only activity is in
+        // the future, still opens bounded at the current month rather than scrolling back to year one.
+        var earliestContent = account.EarliestContentMonth() ?? currentMonth;
+        var lowerContent = earliestContent.CompareTo(currentMonth) < 0 ? earliestContent : currentMonth;
+        var firstMonth = editLock.CompareTo(lowerContent) > 0 ? editLock : lowerContent;
 
         return new TabbedPageView<MonthOnly>()
             .Selected(State.Month)
             .Next(m => m.Add(1))
-            .Prev(m => m.CompareTo(editLock) <= 0 ? null : m.Add(-1))
+            .Prev(m => m.CompareTo(firstMonth) <= 0 ? null : m.Add(-1))
             .Label(MonthLabel)
             .Home(MonthOnly.FromDate(today))    // pinned "jump to the current month" button …
             .HomeIcon(MaterialSymbols.Today)    // … shown with a calendar-with-today icon
@@ -168,15 +176,48 @@ partial class ShellPage : Component<ShellState>
         }
 
         var today = State.Manager?.Today ?? DateOnly.FromDateTime(DateTime.Today);
+
+        // The carried-balance anchor is not a dated transaction — pull it out of the day grouping and render it as its
+        // own darker, header-less box at the foot of the month (it is always the earliest entry).
+        var carried = entries.FirstOrDefault(e => e.Kind == LedgerEntryKind.CarriedBalance);
+        var dated = entries.Where(e => e.Kind != LedgerEntryKind.CarriedBalance).ToList();
+
         var rows = new List<VisualNode>();
-        foreach (var day in MonthLedger.ByDayDescending(entries))
+        foreach (var day in MonthLedger.ByDayDescending(dated))
         {
             rows.Add(DayHeader(scheme, day.Date));
             rows.Add(DayBox(scheme, day.Entries, today));
         }
+        if (carried is not null)
+        {
+            rows.Add(CarriedBalanceBox(scheme, carried));
+        }
 
         return VStack([.. rows]).Spacing(8).Padding(16, 16, 16, 88); // extra bottom room so the last rows clear the FAB
     }
+
+    // The carried-balance anchor: its own box, darker than the day boxes and with no date header, since it has no real
+    // date — it is the opening balance a month close rolled forward.
+    private static VisualNode CarriedBalanceBox(MaterialScheme scheme, LedgerEntry carried) =>
+        Border(
+            Grid("*", "*,Auto",
+                Label("Balance carried")
+                    .FontSize(15)
+                    .TextColor(scheme.OnSurface)
+                    .VCenter()
+                    .GridColumn(0),
+                Label(Money(carried.Balance))
+                    .FontSize(15)
+                    .TextColor(carried.Amount > 0 ? scheme.Income : scheme.Expense)
+                    .HEnd()
+                    .VCenter()
+                    .GridColumn(1)
+            ).Padding(16, 14)
+        )
+        .BackgroundColor(scheme.SurfaceContainerHighest) // darker than the ordinary day boxes
+        .StrokeThickness(0)
+        .StrokeShape(new RoundRectangle().CornerRadius(16))
+        .Margin(0, 8, 0, 0); // a little extra separation from the day boxes above
 
     private static VisualNode DayHeader(MaterialScheme scheme, DateOnly date) =>
         Label(date.ToString("ddd d MMMM", Gb))
@@ -394,18 +435,78 @@ partial class ShellPage : Component<ShellState>
     private void OpenSettings()
     {
         CloseMenu();
-        _ = Navigation?.PushAsync<SettingsPage>();
+        _ = Navigation?.PushAsync<SettingsPage, SettingsProps>(props => props.OnChanged = OnSettingsChanged);
     }
 
-    private VisualNode RenderFab() =>
-        Grid(
-            new Fab()
-                .Icon(MaterialSymbols.Add)
-                .OnClicked(OpenAdd) // the unified add flow (§7)
-        )
-        .HEnd()
-        .VEnd()
-        .Margin(0, 0, 16, -28);
+    // Settings toggled "allow closing months", which reloads every account under the new mode (collapsed vs.
+    // visible-read-only). Re-render so the ledger and balances reflect it; the clamp keeps the view at/above the edit
+    // lock as a safety net.
+    private void OnSettingsChanged() => SetState(s =>
+    {
+        if (s.Manager?.GetAccounts().FirstOrDefault() is { } account)
+        {
+            var editLock = MonthOnly.FromDate(account.EarliestAllowedDate);
+            if (s.Month.CompareTo(editLock) < 0)
+            {
+                s.Month = editLock;
+            }
+        }
+    });
+
+    // The primary add FAB, with a secondary "close month" FAB stacked above it whenever the shown month is the one
+    // that can be closed (§9). ClosableMonth returns null while closing is off (ignoreMonthClosed), so the secondary
+    // FAB is implicitly gated by the Settings preference.
+    private VisualNode RenderFab(Account? account)
+    {
+        var today = State.Manager?.Today ?? DateOnly.FromDateTime(DateTime.Today);
+        var canCloseShownMonth = account?.ClosableMonth(today) is { } closable && closable == State.Month;
+
+        // Each FAB is wrapped in a Grid because layout options on a Component root are no-ops (ADR-0004). Both hover
+        // over the bottom nav bar at the same level: the primary is bottom-right, the small secondary sits to its left
+        // (right margin = 16 + 56 + 16 gap) and is nudged down so its 40dp body centres against the 56dp primary.
+        var children = new List<VisualNode>();
+        if (canCloseShownMonth)
+        {
+            children.Add(
+                Grid(new Fab().Small(true).Secondary(true).Icon(MaterialSymbols.Archive).OnClicked(CloseShownMonth))
+                    .HEnd().VEnd().Margin(0, 0, 88, -20));
+        }
+        children.Add(
+            Grid(new Fab().Icon(MaterialSymbols.Add).OnClicked(OpenAdd)) // the unified add flow (§7)
+                .HEnd().VEnd().Margin(0, 0, 16, -28));
+
+        return Grid([.. children]);
+    }
+
+    // Close the shown month (only reachable via the secondary FAB, which appears only when it is closable). No
+    // confirmation: a close is reversible by turning "Allow closing months" off (the month reappears read-only). Snap
+    // the view up to the advanced edit lock so we don't sit on the now-collapsed month.
+    private void CloseShownMonth()
+    {
+        var account = State.Manager?.GetAccounts().FirstOrDefault();
+        if (account is null || State.Manager is not { } manager)
+        {
+            return;
+        }
+
+        try
+        {
+            account.CloseMonth(State.Month, manager.Today); // auto-persists via AccountManager
+        }
+        catch (InvalidOperationException)
+        {
+            return; // stopped being closable under us
+        }
+
+        SetState(s =>
+        {
+            var editLock = MonthOnly.FromDate(account.EarliestAllowedDate);
+            if (s.Month.CompareTo(editLock) < 0)
+            {
+                s.Month = editLock;
+            }
+        });
+    }
 
     // Push the Add-transaction page (§7). We push a pre-configured instance (not PushAsync<T>, which mints its own
     // and has no props hook) so the page carries the OnClosed callback that reports its outcome back to the shell.

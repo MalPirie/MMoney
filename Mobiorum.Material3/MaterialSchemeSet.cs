@@ -39,6 +39,7 @@ public sealed class MaterialSchemeSet
             Surface = Color.FromArgb("#FFF8F4"),
             OnSurface = Color.FromArgb("#211A14"),
             SurfaceContainer = Color.FromArgb("#F6EAE0"),
+            SurfaceContainerHighest = Color.FromArgb("#E7D5C6"), // darker than the day boxes for the carried-balance anchor
             SurfaceVariant = Color.FromArgb("#F3DFD1"),
             OnSurfaceVariant = Color.FromArgb("#52443A"),
             Outline = Color.FromArgb("#85735F"),
@@ -66,6 +67,7 @@ public sealed class MaterialSchemeSet
             Surface = Color.FromArgb("#1A120C"),
             OnSurface = Color.FromArgb("#EFE0D5"),
             SurfaceContainer = Color.FromArgb("#271C15"),
+            SurfaceContainerHighest = Color.FromArgb("#3A2D24"), // a raised, distinct tone for the carried-balance anchor
             SurfaceVariant = Color.FromArgb("#52443A"),
             OnSurfaceVariant = Color.FromArgb("#D7C3B5"),
             Outline = Color.FromArgb("#9F8D7B"),

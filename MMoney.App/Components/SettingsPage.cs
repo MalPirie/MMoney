@@ -1,29 +1,47 @@
+using System;
 using System.Collections.Generic;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Maui;
 using Microsoft.Maui.ApplicationModel;
 using MauiReactor;
 using MauiReactor.Shapes;
 using Mobiorum.Material3;
+using MMoney.Core;
 
 namespace MMoney.App.Components;
+
+/// <summary>Props for the pushed <see cref="SettingsPage"/>.</summary>
+internal sealed class SettingsProps
+{
+    /// <summary>Invoked after a change that the shell must reflect (e.g. closing a month advances the edit lock).</summary>
+    public Action? OnChanged { get; set; }
+}
 
 internal sealed class SettingsState
 {
     /// <summary>The theme option currently highlighted in the selector (mirrors <see cref="ThemePreference.Current"/>).</summary>
     public AppTheme Theme { get; set; }
+
+    /// <summary>The event-sourced ledger, resolved from DI on mount (to apply the allow-close preference live).</summary>
+    public AccountManager? Manager { get; set; }
+
+    /// <summary>Whether closing months is allowed (mirrors <see cref="MonthClosePreference.Allowed"/>).</summary>
+    public bool AllowClose { get; set; }
 }
 
 /// <summary>
 /// The Settings page (app-design §9): pushed over the shell (ADR-0005) with its own primary-coloured
 /// <see cref="TopAppBar"/>. Content is grouped into rounded <c>surfaceContainer</c> boxes (the ledger day-box
-/// idiom): an "About" box with the app version, and a "Theme" box with the tristate selector that used to live
-/// on the Repeating tab. More options will slot into new boxes here.
+/// idiom): an "About" box with the app version, a "Theme" box with the tristate selector, and a "Close month" box
+/// that collapses the oldest open month into a carried balance (§9 / Core month-close). More options slot in here.
 /// </summary>
-partial class SettingsPage : Component<SettingsState>
+partial class SettingsPage : Component<SettingsState, SettingsProps>
 {
     protected override void OnMounted()
     {
         State.Theme = ThemePreference.Current;
+        State.Manager = Services.GetRequiredService<AccountManager>();
+        State.AllowClose = MonthClosePreference.Allowed;
         base.OnMounted();
     }
 
@@ -42,7 +60,8 @@ partial class SettingsPage : Component<SettingsState>
                 ScrollView(
                     VStack(
                         AboutBox(scheme),
-                        ThemeBox(scheme)
+                        ThemeBox(scheme),
+                        CloseMonthBox(scheme)
                     ).Spacing(24).Padding(16)
                 ).GridRow(1)
             )
@@ -125,6 +144,42 @@ partial class SettingsPage : Component<SettingsState>
     {
         ThemePreference.Set(theme);
         SetState(s => s.Theme = theme);
+    }
+
+    // ---- Close months (Core month-close) -----------------------------------------------------------------
+
+    // A persisted switch. When on, closing is allowed: closed months collapse into a carried balance and the ledger
+    // shows a close button on the oldest open month. When off, past months stay visible but read-only.
+    private VisualNode CloseMonthBox(MaterialScheme scheme) =>
+        Section("Close months", scheme,
+            Grid("Auto", "*,Auto",
+                VStack(
+                    Label("Allow closing months")
+                        .FontSize(15)
+                        .TextColor(scheme.OnSurface),
+                    Label("Collapse a finished month into a carried balance. A close button appears on the oldest open month.")
+                        .FontSize(12)
+                        .TextColor(scheme.OnSurfaceVariant)
+                ).Spacing(2).VCenter().GridColumn(0),
+                Switch()
+                    .IsToggled(State.AllowClose)
+                    .OnColor(scheme.Primary)
+                    .ThumbColor(scheme.OnPrimary)
+                    .VCenter()
+                    .Margin(12, 0, 0, 0)
+                    .OnToggled(() => ToggleAllowClose(!State.AllowClose))
+                    .GridColumn(1)
+            ).Padding(16, 12)
+        );
+
+    // Persist the preference and apply it live: SetIgnoreMonthClosed reloads every account under the new mode
+    // (collapsed vs. visible-read-only), then the shell re-renders on return via OnChanged.
+    private void ToggleAllowClose(bool allowed)
+    {
+        MonthClosePreference.Allowed = allowed;
+        State.Manager?.SetIgnoreMonthClosed(!allowed);
+        Props.OnChanged?.Invoke();
+        SetState(s => s.AllowClose = allowed);
     }
 
     // ---- section box (the rounded surfaceContainer idiom, with a subheader) -------------------------------

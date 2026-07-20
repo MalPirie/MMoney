@@ -51,6 +51,13 @@ public sealed class Account
     public DateOnly EarliestAllowedDate => transactions.EarliestAllowedDate;
 
     /// <summary>
+    /// The earliest month holding any effective transaction — a stored fact or a projected occurrence — or
+    /// <see langword="null"/> when the account has none. The app uses it to bound the month scroller at the first
+    /// month with activity.
+    /// </summary>
+    public MonthOnly? EarliestContentMonth() => transactions.EarliestContentMonth();
+
+    /// <summary>
     /// The account's active repeating sequences, ordered by origin. Sequences that completed before the edit
     /// lock are excluded, as they are no longer relevant.
     /// </summary>
@@ -281,6 +288,25 @@ public sealed class Account
         }
 
         Update(new AccountEvent.MonthClosed(month));
+    }
+
+    /// <summary>
+    /// The month that <see cref="CloseMonth"/> would accept as of <paramref name="today"/> — the earliest month
+    /// holding any transaction, when that month lies before <paramref name="today"/>'s month — or
+    /// <see langword="null"/> when nothing can be closed (no activity yet, the oldest activity is in the current or
+    /// a future month, or closed months are being shown). Lets a UI offer month-close exactly when it would succeed.
+    /// </summary>
+    public MonthOnly? ClosableMonth(DateOnly today)
+    {
+        if (ignoreMonthClosed)
+        {
+            return null;
+        }
+
+        return EarliestContentMonth() is { } earliest
+            && earliest.CompareTo(MonthOnly.FromDate(today)) < 0
+            ? earliest
+            : null;
     }
 
     /// <summary>

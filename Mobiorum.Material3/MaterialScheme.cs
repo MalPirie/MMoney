@@ -24,6 +24,11 @@ public sealed record MaterialScheme
     public required Color Surface { get; init; }
     public required Color OnSurface { get; init; }
     public required Color SurfaceContainer { get; init; }
+
+    /// <summary>The most-emphasised tonal surface — darker than <see cref="SurfaceContainer"/> in light mode — for a
+    /// container that must read as distinct from the ordinary day boxes (e.g. the carried-balance anchor).</summary>
+    public required Color SurfaceContainerHighest { get; init; }
+
     public required Color SurfaceVariant { get; init; }
     public required Color OnSurfaceVariant { get; init; }
 
