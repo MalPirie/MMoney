@@ -256,13 +256,58 @@ partial class SettingsPage : Component<SettingsState, SettingsProps>
 
     // ---- Admin (raw account export / import, ADR-0008) ---------------------------------------------------
 
-    private VisualNode AdminBox(MaterialScheme scheme) =>
-        Section("Admin", scheme,
+    private VisualNode AdminBox(MaterialScheme scheme)
+    {
+        var children = new List<VisualNode>
+        {
             Grid("Auto", "*,*",
                 AdminButton("Export", ExportAccountFile, scheme).GridColumn(0),
                 AdminButton("Import", () => _ = PickAndPreviewImport(), scheme).GridColumn(1)
-            ).ColumnSpacing(12).Padding(16, 12)
-        );
+            ).ColumnSpacing(12),
+        };
+
+        if (CrashLog.Exists)
+        {
+            children.Add(AdminButton("Share crash log", ShareCrashLog, scheme));
+            children.Add(AdminButton("Clear crash log", ClearCrashLog, scheme));
+        }
+        else
+        {
+            children.Add(Label("No crash log — any crash is captured here.")
+                .FontSize(13)
+                .TextColor(scheme.OnSurfaceVariant)
+                .Margin(4, 0, 0, 0));
+        }
+
+        return Section("Admin", scheme, VStack([.. children]).Spacing(12).Padding(16, 12));
+    }
+
+    // Share the crash log via the platform share sheet (copied to cache with a friendly name).
+    private void ShareCrashLog()
+    {
+        if (CrashLog.Exists)
+        {
+            _ = ShareCrashLogAsync();
+        }
+    }
+
+    private static async Task ShareCrashLogAsync()
+    {
+        var dest = System.IO.Path.Combine(FileSystem.CacheDirectory, "mmoney-crash.log");
+        File.Copy(CrashLog.Path, dest, overwrite: true);
+        await Share.Default.RequestAsync(new ShareFileRequest
+        {
+            Title = "Share crash log",
+            File = new ShareFile(dest),
+        });
+    }
+
+    private void ClearCrashLog()
+    {
+        CrashLog.Clear();
+        SetState(_ => { }); // re-render to drop the share/clear buttons
+        _ = ShowSnackbar("Crash log cleared");
+    }
 
     // An M3 filled-tonal button (secondaryContainer). Sizes to its text: a 40dp floor at normal font, but it grows
     // with the label at large accessibility fonts instead of clipping it (MinimumHeightRequest, not a fixed height).

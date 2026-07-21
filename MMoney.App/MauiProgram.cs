@@ -13,6 +13,8 @@ namespace MMoney.App
     {
         public static MauiApp CreateMauiApp()
         {
+            RegisterCrashHandlers();
+
             var builder = MauiApp.CreateBuilder();
             builder
                 .UseMauiReactorApp<AppRoot>(app =>
@@ -22,6 +24,7 @@ namespace MMoney.App
                     unhandledExceptionAction: e =>
                     {
                         System.Diagnostics.Debug.WriteLine(e.ExceptionObject);
+                        CrashLog.Log(e.ExceptionObject as System.Exception, "MauiReactor");
                     })
                 .UseMobiorumMaterial3() // registers the library's custom control handlers (TabStrip touch-down seam)
                 .ConfigureFonts(fonts =>
@@ -46,6 +49,26 @@ namespace MMoney.App
             });
 
             return builder.Build();
+        }
+
+        // Route unhandled exceptions to the persistent crash log (see CrashLog). AndroidEnvironment catches the
+        // managed exceptions that surface through Java as a fatal (the realistic MMoney crash); AppDomain and
+        // TaskScheduler cover last-chance managed and unobserved background-task failures.
+        private static void RegisterCrashHandlers()
+        {
+            System.AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+                CrashLog.Log(e.ExceptionObject as System.Exception, "AppDomain");
+
+            System.Threading.Tasks.TaskScheduler.UnobservedTaskException += (_, e) =>
+            {
+                CrashLog.Log(e.Exception, "TaskScheduler");
+                e.SetObserved();
+            };
+
+#if ANDROID
+            Android.Runtime.AndroidEnvironment.UnhandledExceptionRaiser += (_, e) =>
+                CrashLog.Log(e.Exception, "AndroidEnvironment");
+#endif
         }
     }
 }
