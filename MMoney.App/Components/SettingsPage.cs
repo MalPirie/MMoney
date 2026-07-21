@@ -258,21 +258,22 @@ partial class SettingsPage : Component<SettingsState, SettingsProps>
 
     private VisualNode AdminBox(MaterialScheme scheme) =>
         Section("Admin", scheme,
-            VStack(
-                AdminAction("Export account", "Save the raw event log to share or back up.", ExportAccountFile, scheme),
-                Border().BackgroundColor(scheme.OutlineVariant).HeightRequest(1), // hairline divider
-                AdminAction("Import account", "Replace this account from a backup file.", () => _ = PickAndPreviewImport(), scheme)
-            ).Spacing(12).Padding(16, 12)
+            Grid("Auto", "*,*",
+                AdminButton("Export", ExportAccountFile, scheme).GridColumn(0),
+                AdminButton("Import", () => _ = PickAndPreviewImport(), scheme).GridColumn(1)
+            ).ColumnSpacing(12).Padding(16, 12)
         );
 
-    // A tappable title + subtitle row.
-    private static VisualNode AdminAction(string title, string subtitle, Action onTap, MaterialScheme scheme) =>
-        Grid("Auto", "*",
-            VStack(
-                Label(title).FontSize(15).TextColor(scheme.OnSurface),
-                Label(subtitle).FontSize(12).TextColor(scheme.OnSurfaceVariant)
-            ).Spacing(2)
-        ).MinimumHeightRequest(44).OnTapped(onTap);
+    // An M3 filled-tonal button (secondaryContainer), full-height pill.
+    private static VisualNode AdminButton(string text, Action onClicked, MaterialScheme scheme) =>
+        Button(text)
+            .BackgroundColor(scheme.SecondaryContainer)
+            .TextColor(scheme.OnSecondaryContainer)
+            .FontFamily("OpenSansSemibold")
+            .FontSize(14)
+            .CornerRadius(20)
+            .HeightRequest(40)
+            .OnClicked(onClicked);
 
     // Export: the account's raw log lines to a `<id>.jsonl` cache file, then the platform share sheet (which chooses
     // the destination). The id lives in the file name so a later import can route it (ADR-0008).
