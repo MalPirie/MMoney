@@ -593,7 +593,9 @@ partial class ShellPage : Component<ShellState>
     private VisualNode RenderFab(Account? account)
     {
         var today = State.Manager?.Today ?? DateOnly.FromDateTime(DateTime.Today);
-        var canCloseShownMonth = account?.ClosableMonth(today) is { } closable && closable == State.Month;
+        // Only on the Transactions tab: the close-month action belongs to the month ledger, not the Repeating list.
+        var canCloseShownMonth = State.Tab == 0
+            && account?.ClosableMonth(today) is { } closable && closable == State.Month;
 
         // Each FAB is wrapped in a Grid because layout options on a Component root are no-ops (ADR-0004). Both hover
         // over the bottom nav bar at the same level: the primary is bottom-right, the small secondary sits to its left

@@ -135,7 +135,11 @@ public sealed partial class TabbedPageView<TItem> : Component<TabbedPageViewStat
         if (State.Built)
         {
             var idx = State.Buffer.IndexOf(_selected);
-            if (idx < 0 || Math.Abs(idx - State.Position) > 1)
+            // The buffer only ever appends forward, so it can't drop a stale front on its own. If the back edge has
+            // advanced (e.g. a month was closed), the buffer's earliest page is no longer reachable from the
+            // selection via Prev — rebuild to prune it (otherwise the removed item lingers in the strip).
+            var frontStale = State.Buffer.Count > 0 && !ReachableBack(_selected, State.Buffer[0]);
+            if (frontStale || idx < 0 || Math.Abs(idx - State.Position) > 1)
             {
                 // Not in the buffer, OR more than one page away: REBUILD the buffer around the selection rather than
                 // moving Position within the existing source. A distant in-source Position change is what MAUI's
@@ -153,6 +157,29 @@ public sealed partial class TabbedPageView<TItem> : Component<TabbedPageViewStat
         }
 
         base.OnPropsChanged();
+    }
+
+    // Whether <paramref name="target"/> is the selection itself or still reachable by walking Prev back from it —
+    // i.e. still within the back-bounded range. False once the back edge has advanced past it.
+    private bool ReachableBack(TItem from, TItem target)
+    {
+        if (from.Equals(target))
+        {
+            return true;
+        }
+
+        var cursor = (TItem?)from;
+        for (var i = 0; i < BackCap && cursor is { } c && _prev(c) is { } p; i++)
+        {
+            if (p.Equals(target))
+            {
+                return true;
+            }
+
+            cursor = p;
+        }
+
+        return false;
     }
 
     public override VisualNode Render()
