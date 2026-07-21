@@ -264,7 +264,8 @@ partial class SettingsPage : Component<SettingsState, SettingsProps>
             ).ColumnSpacing(12).Padding(16, 12)
         );
 
-    // An M3 filled-tonal button (secondaryContainer), full-height pill.
+    // An M3 filled-tonal button (secondaryContainer). Sizes to its text: a 40dp floor at normal font, but it grows
+    // with the label at large accessibility fonts instead of clipping it (MinimumHeightRequest, not a fixed height).
     private static VisualNode AdminButton(string text, Action onClicked, MaterialScheme scheme) =>
         Button(text)
             .BackgroundColor(scheme.SecondaryContainer)
@@ -272,7 +273,8 @@ partial class SettingsPage : Component<SettingsState, SettingsProps>
             .FontFamily("OpenSansSemibold")
             .FontSize(14)
             .CornerRadius(20)
-            .HeightRequest(40)
+            .Padding(16, 8)
+            .MinimumHeightRequest(40)
             .OnClicked(onClicked);
 
     // Export: the account's raw log lines to a `<id>.jsonl` cache file, then the platform share sheet (which chooses

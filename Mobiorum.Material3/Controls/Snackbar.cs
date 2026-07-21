@@ -29,6 +29,7 @@ public sealed partial class Snackbar : Component
             Label(_message)
                 .FontSize(14)
                 .TextColor(scheme.InverseOnSurface)
+                .MaxLines(2) // a long message wraps to two lines rather than being clipped at a large font
                 .VCenter()
                 .Margin(16, 0, 0, 0)
                 .GridColumn(0),
@@ -48,13 +49,17 @@ public sealed partial class Snackbar : Component
                 .GridColumn(1));
         }
 
+        // Height sizes to the content (a 48dp floor with 8dp vertical padding) rather than a fixed 48dp row, so at a
+        // large accessibility font the bar grows to fit the text — or its second line — instead of clipping it.
         return Border(
-            Grid("48", "*,Auto", [.. children])
+            Grid("Auto", "*,Auto", [.. children])
         )
         .BackgroundColor(scheme.InverseSurface)
         .StrokeThickness(0)
         .StrokeShape(new RoundRectangle().CornerRadius(4)) // M3 snackbar container: extra-small (4dp)
         .Shadow(Elevation.Level3)
+        .Padding(0, 8)
+        .MinimumHeightRequest(48)
         .Margin(16)
         .MinimumWidthRequest(344 - 32) // M3 min snackbar width (344dp) less the margins
         .MaximumWidthRequest(600);
