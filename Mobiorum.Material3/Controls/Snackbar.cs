@@ -61,7 +61,9 @@ public sealed partial class Snackbar : Component
         .Padding(0, 8)
         .MinimumHeightRequest(48)
         .Margin(16)
-        .MinimumWidthRequest(344 - 32) // M3 min snackbar width (344dp) less the margins
+        // Fill the available width (bounded by the screen) rather than forcing a fixed minimum: at a large display
+        // size the screen has few dp across, and an M3-min 312dp bar plus margins would overrun the right edge.
+        .HFill()
         .MaximumWidthRequest(600);
     }
 }
