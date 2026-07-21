@@ -202,7 +202,17 @@ public sealed partial class TabStrip<TItem> : Component<TabStripState<TItem>>
         // resolve to a pure decision and apply it. Guarded by Seeded so the initial mount doesn't act before the seed.
         if (State.Seeded && !_selected.Equals(State.LastSelected))
         {
-            ResolveAndApply(StripStimulus.SelectionChanged);
+            // A back-edge advance (e.g. a month was closed) leaves the window's leading tab no longer reachable from
+            // the selection via Prev. Force a reseed so that tab drops and the new earliest becomes the first tab,
+            // rather than gliding within the now-stale window (what the resolver would pick for an adjacent step).
+            if (State.Window.Count > 0 && !ReachableBack(_selected, State.Window[0]))
+            {
+                Apply(StripStimulus.SelectionChanged, new StripTransition.Reseed());
+            }
+            else
+            {
+                ResolveAndApply(StripStimulus.SelectionChanged);
+            }
         }
         else if (State.WasTracking && _track is null)
         {
@@ -211,6 +221,30 @@ public sealed partial class TabStrip<TItem> : Component<TabStripState<TItem>>
 
         State.WasTracking = _track is not null;
         base.OnPropsChanged();
+    }
+
+    // Whether <paramref name="target"/> is the selection itself or still reachable by walking Prev back from it —
+    // i.e. still within the back-bounded range. False once the back edge has advanced past it (a closed month). The
+    // cap only guards against a malformed Prev chain; a real edge (null Prev) stops the walk far sooner.
+    private bool ReachableBack(TItem from, TItem target)
+    {
+        if (from.Equals(target))
+        {
+            return true;
+        }
+
+        var cursor = (TItem?)from;
+        for (var i = 0; i < 4096 && cursor is { } c && _prev(c) is { } p; i++)
+        {
+            if (p.Equals(target))
+            {
+                return true;
+            }
+
+            cursor = p;
+        }
+
+        return false;
     }
 
     // Resolve the resting transition for a stimulus over the current layout, then execute it. The resolver owns every
