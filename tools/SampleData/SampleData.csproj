@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>MMoney.Tools.SampleData</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\MMoney.Core\MMoney.Core.csproj" />
+    <!-- Same version MMoney.Core uses; needed for the real FileSystem behind AccountPersistenceService. -->
+    <PackageReference Include="System.IO.Abstractions" Version="22.1.1" />
+  </ItemGroup>
+
+</Project>
