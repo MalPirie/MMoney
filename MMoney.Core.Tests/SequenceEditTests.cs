@@ -107,4 +107,33 @@ public class SequenceEditTests
         Assert.Equal("new", account.GetMonth(M(2026, 3))[0].Description);
         Assert.Equal(2, account.GetSequences().Count);
     }
+
+    // A whole-series edit passes the sequence origin as the Core handle. When that origin occurrence no longer
+    // resolves — e.g. it was individually skipped (tombstoned) — the change must still apply to the sequence;
+    // it previously threw "The specified transaction does not exist." (crash on save).
+    [Fact]
+    public void ChangeSequenceDescription_WhenOriginOccurrenceWasSkipped_StillUpdatesTheSequence()
+    {
+        var account = NewAccount();
+        var origin = account.AddTransaction(D(2026, 1, 10), -20m, "Gym", MonthlyOnDay(), Forever());
+        account.RemoveTransaction(origin); // skip (tombstone) the origin occurrence
+
+        account.ChangeSequenceDescription(origin, D(2026, 1, 10), "Fitness");
+
+        var feb = account.GetMonth(M(2026, 2)).Single(e => e.Kind == LedgerEntryKind.Occurrence);
+        Assert.Equal("Fitness", feb.Description);
+    }
+
+    [Fact]
+    public void ChangeSequenceAmount_WhenOriginOccurrenceWasSkipped_StillUpdatesTheSequence()
+    {
+        var account = NewAccount();
+        var origin = account.AddTransaction(D(2026, 1, 10), -20m, "Gym", MonthlyOnDay(), Forever());
+        account.RemoveTransaction(origin);
+
+        account.ChangeSequenceAmount(origin, D(2026, 1, 10), -25m);
+
+        var feb = account.GetMonth(M(2026, 2)).Single(e => e.Kind == LedgerEntryKind.Occurrence);
+        Assert.Equal(-25m, feb.Amount);
+    }
 }

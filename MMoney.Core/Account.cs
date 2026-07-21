@@ -463,14 +463,12 @@ public sealed class Account
         }
     }
 
-    private Sequence GetSequenceOrThrow(Transaction transaction)
-    {
-        if (transactions.Find(transaction.Id) is null)
-        {
-            throw new InvalidOperationException("The specified transaction does not exist.");
-        }
-
-        return transactions.FindSequence(transaction.Sequence)
+    // A sequence-level change is keyed by the sequence number, not by the specific handle occurrence: the handle
+    // is typically the origin, whose occurrence may legitimately not resolve — it can have been individually
+    // deleted/skipped (tombstoned), or, for a Weekly rule whose stored days differ from the origin's own weekday,
+    // never be a projected occurrence at all. So validate that the sequence exists, not that this exact
+    // transaction resolves; requiring the latter crashed whole-series edits of such sequences.
+    private Sequence GetSequenceOrThrow(Transaction transaction) =>
+        transactions.FindSequence(transaction.Sequence)
             ?? throw new InvalidOperationException("The specified transaction is not part of a sequence.");
-    }
 }
