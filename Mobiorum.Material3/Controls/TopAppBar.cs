@@ -1,4 +1,5 @@
 using MauiReactor;
+using Microsoft.Maui;
 using Microsoft.Maui.Graphics;
 
 namespace Mobiorum.Material3;
@@ -63,6 +64,8 @@ public sealed partial class TopAppBar : Component
             .FontSize(22) // M3 title-large
             .TextColor(onContainer)
             .VCenter()
+            .MaxLines(1) // a long title stays on one line and ellipsizes rather than wrapping (large font sizes)
+            .LineBreakMode(LineBreakMode.TailTruncation)
             .Margin(_onBack is null ? 16 : 4, 0, 0, 0)
             .GridColumn(1));
 

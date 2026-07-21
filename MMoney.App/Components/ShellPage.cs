@@ -34,6 +34,15 @@ internal sealed class ShellState
     /// <summary>Whether the banner's overflow (three-dot) dropdown menu is open.</summary>
     public bool MenuOpen { get; set; }
 
+    /// <summary>The hero balance's current font size — stepped down from the max when it would otherwise wrap, so a
+    /// long amount at a large accessibility font stays on one line (money never wraps or truncates).</summary>
+    public double HeroFont { get; set; } = 40;
+
+    /// <summary>The measured height of one line at <see cref="HeroFont"/> (from a hidden reference), used to detect
+    /// when the hero has wrapped independently of the OS font scale. And the value it was last fitted for.</summary>
+    public double HeroLineHeight { get; set; }
+    public string HeroText { get; set; } = string.Empty;
+
     /// <summary>Whether the "deleted" Snackbar is showing, its Undo payload, and a token guarding the auto-dismiss
     /// so a later delete's timer can't hide an earlier one (§7).</summary>
     public bool SnackbarOpen { get; set; }
@@ -87,12 +96,36 @@ partial class ShellPage : Component<ShellState>
         var available = account?.BalanceOn(MonthOnly.FromDate(today).LastDay) ?? 0m;
         var pending = available - hero;
 
+        var money = Money(hero);
+
+        // Row 0: the hero balance (left, near full width — only the ⋮ column held back) and the ⋮ button (top-right).
+        // Row 1: Available/Pending, right-aligned, on their own line beneath the balance. Keeping them off the hero's
+        // row is what avoids the collision at large font — the hero can take the width without overlapping them, and
+        // the button still shares the top row (no wasted space). The hero shrinks to fit one line rather than wrap.
         return Grid("Auto,Auto", "*,Auto",
-            Label(Money(hero))
-                .FontSize(40)
-                .TextColor(scheme.OnPrimary)
-                .VCenter()
-                .GridColumn(0).GridRowSpan(2),
+            Grid(
+                // A hidden one-line reference at the same font scales identically to the hero, so comparing heights
+                // detects a wrap regardless of the OS font-scale factor (which we can't read directly).
+                Label("0")
+                    .FontSize(State.HeroFont)
+                    .TextColor(scheme.OnPrimary)
+                    .Opacity(0)
+                    .HStart().VCenter()
+                    .OnSizeChanged((Size s) =>
+                    {
+                        if (Math.Abs(State.HeroLineHeight - s.Height) > 0.5)
+                        {
+                            SetState(st => st.HeroLineHeight = s.Height);
+                        }
+                    }),
+                Label(money)
+                    .FontSize(State.HeroFont)
+                    .TextColor(scheme.OnPrimary)
+                    .MaxLines(2)
+                    .HStart().VCenter()
+                    .OnSizeChanged((Size s) => OnHeroMeasured(money, s.Height))
+            ).GridColumn(0).GridRow(0).VCenter(),
+
             Button(MaterialSymbols.MoreVert)
                 .FontFamily(MaterialSymbols.FontFamily)
                 .FontSize(24)
@@ -110,8 +143,28 @@ partial class ShellPage : Component<ShellState>
             VStack(
                 Label($"Available {Money(available)}").FontSize(12).TextColor(scheme.OnPrimary).HEnd(),
                 Label($"Pending {Money(pending)}").FontSize(12).TextColor(scheme.OnPrimary).HEnd()
-            ).Spacing(2).GridColumn(1).GridRow(1)
+            ).Spacing(2).GridColumn(0).GridColumnSpan(2).GridRow(1)
         ).BackgroundColor(scheme.Primary).Padding(20, 12);
+    }
+
+    private const double HeroFontMax = 40;
+    private const double HeroFontMin = 22;
+    private const double HeroFontStep = 3;
+
+    // Keep the hero balance on one line: a fresh value resets to the max size; if it then measures taller than one
+    // reference line (i.e. it wrapped), step the font down until it fits. Money is never wrapped or truncated.
+    private void OnHeroMeasured(string text, double height)
+    {
+        if (text != State.HeroText)
+        {
+            SetState(s => { s.HeroText = text; s.HeroFont = HeroFontMax; });
+            return;
+        }
+
+        if (State.HeroLineHeight > 0 && height > State.HeroLineHeight * 1.5 && State.HeroFont > HeroFontMin)
+        {
+            SetState(s => s.HeroFont = Math.Max(HeroFontMin, s.HeroFont - HeroFontStep));
+        }
     }
 
     private VisualNode RenderCentral(MaterialScheme scheme, Account? account) => State.Tab switch
@@ -254,8 +307,8 @@ partial class ShellPage : Component<ShellState>
             : Colors.Transparent;
 
         // Columns: accent bar · gap · description(fill, wraps to 2 lines with an inline repeat glyph) · gap · amount
-        // (fixed-width so amounts right-align in a tidy column).
-        var row = Grid("*", "4,10,*,16,96",
+        // (fixed-width so amounts right-align in a tidy column; wide enough to hold a long "-£1,150.00" at large font).
+        var row = Grid("*", "4,10,*,16,116",
                 Border()
                     .BackgroundColor(accent)
                     .StrokeThickness(0)

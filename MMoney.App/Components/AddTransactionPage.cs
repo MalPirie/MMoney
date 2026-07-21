@@ -335,11 +335,14 @@ partial class AddTransactionPage : Component<AddTransactionState, AddTransaction
     // changing an existing transaction's repeat rule is deferred to §8, so there is nothing to open.
     private VisualNode RepeatField(MaterialScheme scheme)
     {
+        // A little top padding so that when the summary wraps to multiple lines (long rule + large font) its first
+        // line clears the notched "Repeat" label straddling the top outline instead of colliding with it.
         var summary = Grid(
             Label(RepeatSummary())
                 .FontSize(16)
                 .TextColor(RepeatReadOnly ? scheme.OnSurfaceVariant : scheme.OnSurface)
-                .VCenter());
+                .VCenter())
+            .Padding(0, 8, 0, 8);
 
         // Read-only only for a one-off ("Does not repeat"). Any sequence edit (occurrence or whole-series) keeps it
         // interactive so the schedule can be changed.
