@@ -85,7 +85,10 @@ partial class ShellPage : Component<ShellState>
                 RenderBanner(scheme, account).GridRow(0),
                 RenderCentral(scheme, account).GridRow(1),
                 RenderNavBar().GridRow(2),
-                RenderFab(account).GridRow(1),
+                // The FAB layer spans the central area AND the nav bar: a FAB hovering over the bar must still sit
+                // INSIDE its parent's bounds, because Android clips touch dispatch to the parent rect — anything
+                // drawn outside it renders but never receives taps (that made the lower half of each FAB dead).
+                RenderFab(account).GridRow(1).GridRowSpan(2),
                 RenderSnackbar().GridRow(1), // deleted-transaction Undo, bottom of the central area
                 RenderOverflowMenu(scheme).GridRowSpan(3), // overlay layer, on top of everything (ADR-0004)
                 // The close-month confirmation (ADR-0007 ModalHost). Content is built every render even while closed,
@@ -616,6 +619,11 @@ partial class ShellPage : Component<ShellState>
     // The primary add FAB, with a secondary "close month" FAB stacked above it whenever the shown month is the one
     // that can be closed (§9). ClosableMonth returns null while closing is off (ignoreMonthClosed), so the secondary
     // FAB is implicitly gated by the Settings preference.
+    // M3 metrics the FAB placement is derived from: the NavigationBar's container height, and the two FAB body sizes.
+    private const double NavBarHeight = 80;
+    private const double FabSize = 56;
+    private const double SmallFabSize = 40;
+
     private VisualNode RenderFab(Account? account)
     {
         var today = State.Manager?.Today ?? DateOnly.FromDateTime(DateTime.Today);
@@ -625,17 +633,22 @@ partial class ShellPage : Component<ShellState>
 
         // Each FAB is wrapped in a Grid because layout options on a Component root are no-ops (ADR-0004). Both hover
         // over the bottom nav bar at the same level: the primary is bottom-right, the small secondary sits to its left
-        // (right margin = 16 + 56 + 16 gap) and is nudged down so its 40dp body centres against the 56dp primary.
+        // (right margin = 16 + 56 + 16 gap) and both centre on the nav bar's top edge.
+        //
+        // The bottom margins are measured from the BOTTOM OF THE NAV BAR (this layer spans both rows — see Render), so
+        // they stay positive and the whole FAB is inside the parent's bounds and therefore fully tappable. Never pull a
+        // FAB out with a negative margin: it would still draw, but Android would not dispatch touches to the part that
+        // overflows the parent.
         var children = new List<VisualNode>();
         if (canCloseShownMonth)
         {
             children.Add(
                 Grid(new Fab().Small(true).Secondary(true).Icon(MaterialSymbols.Archive).OnClicked(RequestCloseMonth))
-                    .HEnd().VEnd().Margin(0, 0, 88, -20));
+                    .HEnd().VEnd().Margin(0, 0, 88, NavBarHeight - (SmallFabSize / 2)));
         }
         children.Add(
             Grid(new Fab().Icon(MaterialSymbols.Add).OnClicked(OpenAdd)) // the unified add flow (§7)
-                .HEnd().VEnd().Margin(0, 0, 16, -28));
+                .HEnd().VEnd().Margin(0, 0, 16, NavBarHeight - (FabSize / 2)));
 
         return Grid([.. children]);
     }
