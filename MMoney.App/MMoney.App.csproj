@@ -33,11 +33,11 @@
 	</PropertyGroup>
 
 	<ItemGroup>
-		<!-- App Icon -->
-		<MauiIcon Include="Resources\AppIcon\appicon.svg" ForegroundFile="Resources\AppIcon\appiconfg.svg" Color="#B35A00" />
+		<!-- App Icon: hand-and-coin foreground on the brand orange -->
+		<MauiIcon Include="Resources\AppIcon\appicon.svg" ForegroundFile="Resources\AppIcon\hand_and_coin.svg" Color="#C2610A" />
 
 		<!-- Splash Screen (fixed brand orange; does not adapt to dark mode) -->
-		<MauiSplashScreen Include="Resources\Splash\splash.svg" Color="#B35A00" BaseSize="128,128" />
+		<MauiSplashScreen Include="Resources\Splash\hand_and_coin.svg" Color="#C2610A" BaseSize="128,128" />
 
 		<!-- Images -->
 		<MauiImage Include="Resources\Images\*" />
