@@ -34,6 +34,9 @@ internal sealed class ShellState
     /// <summary>Whether the banner's overflow (three-dot) dropdown menu is open.</summary>
     public bool MenuOpen { get; set; }
 
+    /// <summary>Whether the "close this month?" confirmation dialog is open.</summary>
+    public bool CloseConfirmOpen { get; set; }
+
     /// <summary>The hero balance's current font size — stepped down from the max when it would otherwise wrap, so a
     /// long amount at a large accessibility font stays on one line (money never wraps or truncates).</summary>
     public double HeroFont { get; set; } = 40;
@@ -80,7 +83,14 @@ partial class ShellPage : Component<ShellState>
                 RenderNavBar().GridRow(2),
                 RenderFab(account).GridRow(1),
                 RenderSnackbar().GridRow(1), // deleted-transaction Undo, bottom of the central area
-                RenderOverflowMenu(scheme).GridRowSpan(3) // overlay layer, on top of everything (ADR-0004)
+                RenderOverflowMenu(scheme).GridRowSpan(3), // overlay layer, on top of everything (ADR-0004)
+                // The close-month confirmation (ADR-0007 ModalHost). Content is built every render even while closed,
+                // so CloseMonthDialog is null-safe when nothing is being closed.
+                new ModalHost()
+                    .IsOpen(State.CloseConfirmOpen)
+                    .OnDismiss(CancelCloseMonth)
+                    .Content(CloseMonthDialog())
+                    .GridRowSpan(3)
             )
         ).HasNavigationBar(false); // we draw our own banner; the NavigationPage bar stays hidden (ADR-0005)
     }
@@ -604,7 +614,7 @@ partial class ShellPage : Component<ShellState>
         if (canCloseShownMonth)
         {
             children.Add(
-                Grid(new Fab().Small(true).Secondary(true).Icon(MaterialSymbols.Archive).OnClicked(CloseShownMonth))
+                Grid(new Fab().Small(true).Secondary(true).Icon(MaterialSymbols.Archive).OnClicked(RequestCloseMonth))
                     .HEnd().VEnd().Margin(0, 0, 88, -20));
         }
         children.Add(
@@ -614,14 +624,36 @@ partial class ShellPage : Component<ShellState>
         return Grid([.. children]);
     }
 
-    // Close the shown month (only reachable via the secondary FAB, which appears only when it is closable). No
-    // confirmation: a close is reversible by turning "Allow closing months" off (the month reappears read-only). Snap
-    // the view up to the advanced edit lock so we don't sit on the now-collapsed month.
-    private void CloseShownMonth()
+    // The close-month secondary FAB (appears only when the shown month is closable). Ask first: closing collapses the
+    // month into a carried balance and locks it, so it warrants a deliberate confirm even though it is reversible.
+    private void RequestCloseMonth() => SetState(s => s.CloseConfirmOpen = true);
+
+    private void CancelCloseMonth() => SetState(s => s.CloseConfirmOpen = false);
+
+    // The confirmation dialog, centred by the ModalHost in Render. Built every render (eager content), so it is
+    // harmless while closed; State.Month is always the closable month here (the FAB only shows for that month).
+    private VisualNode CloseMonthDialog()
+    {
+        var month = State.Month.FirstDay.ToString("MMMM yyyy", Gb);
+        return new AlertDialog()
+            .Title($"Close {month}?")
+            .Message($"This collapses {month}'s transactions into a “Balance carried” opening entry in the next month "
+                + "and locks the month against edits. You can bring closed months back (read-only) by turning off "
+                + "“Allow closing months” in Settings.")
+            .ConfirmText("Close")
+            .DismissText("Cancel")
+            .OnConfirm(ConfirmCloseMonth)
+            .OnDismiss(CancelCloseMonth);
+    }
+
+    // Confirmed: close the shown month. A close is reversible by turning "Allow closing months" off (the month
+    // reappears read-only). Snap the view up to the advanced edit lock so we don't sit on the now-collapsed month.
+    private void ConfirmCloseMonth()
     {
         var account = State.Manager?.GetAccounts().FirstOrDefault();
         if (account is null || State.Manager is not { } manager)
         {
+            CancelCloseMonth();
             return;
         }
 
@@ -631,11 +663,13 @@ partial class ShellPage : Component<ShellState>
         }
         catch (InvalidOperationException)
         {
+            CancelCloseMonth();
             return; // stopped being closable under us
         }
 
         SetState(s =>
         {
+            s.CloseConfirmOpen = false;
             var editLock = MonthOnly.FromDate(account.EarliestAllowedDate);
             if (s.Month.CompareTo(editLock) < 0)
             {
