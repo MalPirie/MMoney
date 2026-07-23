@@ -37,6 +37,10 @@ internal sealed class ShellState
     /// <summary>Whether the "close this month?" confirmation dialog is open.</summary>
     public bool CloseConfirmOpen { get; set; }
 
+    /// <summary>Bumped whenever the account is reloaded under a new close-months mode, to force the Transactions
+    /// pager to remount (reseeding its strip from the fresh bounds) rather than reuse stale materialised months.</summary>
+    public int LedgerEpoch { get; set; }
+
     /// <summary>The hero balance's current font size — stepped down from the max when it would otherwise wrap, so a
     /// long amount at a large accessibility font stays on one line (money never wraps or truncates).</summary>
     public double HeroFont { get; set; } = 40;
@@ -204,7 +208,12 @@ partial class ShellPage : Component<ShellState>
         // the future, still opens bounded at the current month rather than scrolling back to year one.
         var earliestContent = account.EarliestContentMonth() ?? currentMonth;
         var lowerContent = earliestContent.CompareTo(currentMonth) < 0 ? earliestContent : currentMonth;
-        var firstMonth = editLock.CompareTo(lowerContent) > 0 ? editLock : lowerContent;
+
+        // When "allow closing months" is off, closed months are shown read-only: their content reappears (the
+        // projection floor drops to MinValue) but the edit lock still sits past them, so clamping the strip to the
+        // lock would hide the very months we brought back. Only clamp to the lock while closing is enabled.
+        var showingClosed = State.Manager?.IgnoreMonthClosed ?? false;
+        var firstMonth = !showingClosed && editLock.CompareTo(lowerContent) > 0 ? editLock : lowerContent;
 
         return new TabbedPageView<MonthOnly>()
             .Selected(State.Month)
@@ -215,7 +224,10 @@ partial class ShellPage : Component<ShellState>
             .HomeIcon(MaterialSymbols.Today)    // … shown with a calendar-with-today icon
             .Page(m => MonthPage(scheme, account, m))
             .OnSelectedChanged(m => SetState(s => s.Month = m))
-            .WithKey("transactions-pager"); // stable identity so a Month change reuses the control, not rebuilds it
+            // Stable across month changes (so a swipe reuses the control), but keyed on the ledger epoch so a
+            // close-months mode switch remounts it — reseeding the strip from the new bounds instead of keeping
+            // months the new mode should drop (or missing ones it should now show).
+            .WithKey($"transactions-pager-{State.LedgerEpoch}");
     }
 
     // Strip label: months in the current year read as a long name with no year ("July"); other years use a short
@@ -583,10 +595,12 @@ partial class ShellPage : Component<ShellState>
     });
 
     // Settings toggled "allow closing months", which reloads every account under the new mode (collapsed vs.
-    // visible-read-only). Re-render so the ledger and balances reflect it; the clamp keeps the view at/above the edit
-    // lock as a safety net.
+    // visible-read-only). Bump the ledger epoch so the pager remounts and reseeds its strip from the fresh bounds
+    // (dropping now-collapsed months, or admitting now-visible closed ones); the clamp keeps the view at/above the
+    // edit lock as a safety net.
     private void OnSettingsChanged() => SetState(s =>
     {
+        s.LedgerEpoch++;
         if (s.Manager?.GetAccounts().FirstOrDefault() is { } account)
         {
             var editLock = MonthOnly.FromDate(account.EarliestAllowedDate);
