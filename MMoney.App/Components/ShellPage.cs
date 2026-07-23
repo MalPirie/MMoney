@@ -278,7 +278,9 @@ partial class ShellPage : Component<ShellState>
     }
 
     // The carried-balance anchor: its own box, darker than the day boxes and with no date header, since it has no real
-    // date — it is the opening balance a month close rolled forward.
+    // date — it is the opening balance a month close rolled forward. An ordinary ledger row is two lines tall (amount
+    // over running balance); this card has one, so the extra vertical padding makes up the missing line's height and
+    // the single, vertically centred label sits at the same box height as a one-row day box.
     private static VisualNode CarriedBalanceBox(MaterialScheme scheme, LedgerEntry carried) =>
         Border(
             Grid("*", "*,Auto",
@@ -293,7 +295,7 @@ partial class ShellPage : Component<ShellState>
                     .HEnd()
                     .VCenter()
                     .GridColumn(1)
-            ).Padding(16, 14)
+            ).Padding(16, 21)
         )
         .BackgroundColor(scheme.SurfaceContainerHighest) // darker than the ordinary day boxes
         .StrokeThickness(0)
