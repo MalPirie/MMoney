@@ -1,6 +1,6 @@
 // Converts a legacy account file into the new nljson event log.
 //
-//   dotnet run --project tools/Convert -- <input.txt> <output.jsonl>
+//   dotnet run --project tools/Convert -- <input.txt> <output.jsonl> [--close-before <yyyy-MM>]
 //
 // The legacy format is a comma-separated event log keyed by a per-payment GUID:
 //   AddPayment,<id>,<description>,<amount>,<yyyyMMdd>
@@ -18,7 +18,8 @@
 // duplicates and unmatched items fall out as one-offs. The new log is built through MMoney.Core, so it is guaranteed
 // valid and replayable, and a final pass verifies the rebuilt (date, amount) multiset matches the legacy final state
 // exactly (lossless). The output file's name stem must be the account id (32 hex), as the app's admin Import expects
-// (ADR-0008).
+// (ADR-0008). With --close-before, every month before the given one is then closed oldest-first through the domain's
+// own CloseMonth, so the imported account opens with that history collapsed behind a single carried balance.
 
 using System.Globalization;
 using System.IO.Abstractions;
@@ -32,14 +33,36 @@ const int MonthlyToleranceDays = 10;  // how far a monthly occurrence may drift 
 const double MinFillRatio = 0.5;      // fraction of grid slots that must be filled for a group to count as regular
 const int OngoingWindowDays = 45;     // a sequence whose last occurrence is within this of the newest data is ongoing
 
-if (args.Length < 2)
+// ---- arguments ------------------------------------------------------------------------------------------
+MonthOnly closeBefore = MonthOnly.Undefined;
+var positional = new List<string>();
+
+for (var a = 0; a < args.Length; a++)
 {
-    Console.Error.WriteLine("usage: Convert <input.txt> <output.jsonl>   (output stem must be the account id, 32 hex)");
+    if (args[a] == "--close-before")
+    {
+        if (a + 1 >= args.Length || !TryMonth(args[a + 1], out closeBefore))
+        {
+            Console.Error.WriteLine("--close-before needs a month as yyyy-MM");
+            return 1;
+        }
+
+        a++;
+        continue;
+    }
+
+    positional.Add(args[a]);
+}
+
+if (positional.Count < 2)
+{
+    Console.Error.WriteLine("usage: Convert <input.txt> <output.jsonl> [--close-before <yyyy-MM>]"
+        + "   (output stem must be the account id, 32 hex)");
     return 1;
 }
 
-var inputPath = Path.GetFullPath(args[0]);
-var outputPath = Path.GetFullPath(args[1]);
+var inputPath = Path.GetFullPath(positional[0]);
+var outputPath = Path.GetFullPath(positional[1]);
 if (!Guid.TryParse(Path.GetFileNameWithoutExtension(outputPath), out var id))
 {
     Console.Error.WriteLine($"the output file name stem must be an account id (GUID): '{Path.GetFileNameWithoutExtension(outputPath)}'");
@@ -295,10 +318,6 @@ foreach (var p in finals.Where(p => !consumed.Contains(p)))
     account.AddTransaction(p.Date, p.Amount, p.Description);
 }
 
-Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
-File.Copy(Path.Combine(tempDir, id.ToString("N")), outputPath, overwrite: true);
-Directory.Delete(tempDir, recursive: true);
-
 // ---- verify the rebuild is lossless --------------------------------------------------------------------
 // The multiset of (date, amount) the app would display over the data's span must equal the legacy final state.
 var target = Multiset(finals.Select(p => (p.Date, p.Amount)));
@@ -335,12 +354,35 @@ foreach (var (key, count) in rebuilt)
     }
 }
 
+// ---- close the requested history ------------------------------------------------------------------------
+// After the lossless check, not before: closing collapses a month's transactions into a carried balance, which
+// is precisely what that check would report as a discrepancy. Months close oldest-first through the real
+// domain API, so the log carries the same MonthClosed events the app itself would write.
+var closedMonths = 0;
+if (closeBefore != MonthOnly.Undefined)
+{
+    while (account.ClosableMonth(newest) is { } closable && closable.CompareTo(closeBefore) < 0)
+    {
+        account.CloseMonth(closable, newest);
+        closedMonths++;
+    }
+}
+
+Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+File.Copy(Path.Combine(tempDir, id.ToString("N")), outputPath, overwrite: true);
+Directory.Delete(tempDir, recursive: true);
+
 // ---- report --------------------------------------------------------------------------------------------
 var events = File.ReadLines(outputPath).Count();
 var oneOffs = finals.Count(p => !consumed.Contains(p));
 Console.WriteLine($"Converted {finals.Count} payments -> account {id:N}: "
     + $"{plans.Count} sequence(s), {oneOffs} one-off(s), {events} events.");
 Console.WriteLine($"  overrides: {amountOverrides} amount, {dateMoves} date, {tombstones} suppressed occurrence(s).");
+if (closedMonths > 0)
+{
+    Console.WriteLine($"  closed {closedMonths} month(s) before {closeBefore} — that history is now a single "
+        + $"carried balance on {closeBefore.FirstDay:yyyy-MM-dd}.");
+}
 if (skippedZero > 0 || unrecognised > 0)
 {
     Console.WriteLine($"  (skipped {skippedZero} zero-amount, {unrecognised} unrecognised line(s))");
@@ -378,6 +420,18 @@ decimal Amount(string s) => decimal.Parse(s.Trim(), NumberStyles.Number, inv);
 
 static bool TryDate(string s, out DateOnly date) =>
     DateOnly.TryParseExact(s.Trim(), "yyyyMMdd", CultureInfo.InvariantCulture, DateTimeStyles.None, out date);
+
+static bool TryMonth(string s, out MonthOnly month)
+{
+    month = MonthOnly.Undefined;
+    var ok = DateOnly.TryParseExact(s.Trim() + "-01", "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var first);
+    if (ok)
+    {
+        month = MonthOnly.FromDate(first);
+    }
+
+    return ok;
+}
 
 // Case-insensitive, whitespace-collapsed key so casing and spacing differences group together.
 static string Normalise(string description) =>
