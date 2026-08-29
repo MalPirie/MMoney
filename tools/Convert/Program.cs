@@ -9,17 +9,19 @@
 //   UpdatePaymentDescription,<id>,<description>
 //   RemovePayment,<id>
 //
-// We replay it to each payment's final state, then aggressively recover repeat sequences. Payments are grouped by a
-// *normalised* description (case-insensitive, whitespace-collapsed), so "Henry pm" and "Henry PM" are one thing. Each
-// group's dominant cadence (weekly ~7d / monthly ~30d) is detected from the median gap between dates; its occurrences
-// are matched to the projected schedule grid with a tolerance, so payday drift and the odd moved date still land in
-// the sequence. Amount is NOT part of the grouping: a sequence carries a base amount (its latest) and every occurrence
-// whose real amount or date differs is preserved as a per-occurrence override; a genuinely missing slot is tombstoned;
-// duplicates and unmatched items fall out as one-offs. The new log is built through MMoney.Core, so it is guaranteed
-// valid and replayable, and a final pass verifies the rebuilt (date, amount) multiset matches the legacy final state
-// exactly (lossless). The output file's name stem must be the account id (32 hex), as the app's admin Import expects
-// (ADR-0008). With --close-before, every month before the given one is then closed oldest-first through the domain's
-// own CloseMonth, so the imported account opens with that history collapsed behind a single carried balance.
+// Descriptions are percent-encoded in that log (a comma is written as %2C, the format being comma-separated), so they
+// are decoded on the way in. We replay it to each payment's final state, then aggressively recover repeat sequences.
+// Payments are grouped by a *normalised* description (case-insensitive, whitespace-collapsed), so "Henry pm" and
+// "Henry PM" are one thing. Each group's dominant cadence (weekly ~7d / monthly ~30d) is detected from the median gap
+// between dates; its occurrences are matched to the projected schedule grid with a tolerance, so payday drift and the
+// odd moved date still land in the sequence. Amount is NOT part of the grouping: a sequence carries a base amount
+// (its latest) and every occurrence whose real amount or date differs is preserved as a per-occurrence override; a
+// genuinely missing slot is tombstoned; duplicates and unmatched items fall out as one-offs. The new log is built
+// through MMoney.Core, so it is guaranteed valid and replayable, and a final pass verifies the rebuilt (date, amount)
+// multiset matches the legacy final state exactly (lossless). The output file's name stem must be the account id (32
+// hex), as the app's admin Import expects (ADR-0008). With --close-before, every month before the given one is then
+// closed oldest-first through the domain's own CloseMonth, so the imported account opens with that history collapsed
+// behind a single carried balance.
 
 using System.Globalization;
 using System.IO.Abstractions;
@@ -100,7 +102,7 @@ foreach (var raw in File.ReadLines(inputPath))
                 order.Add(f[1]);
             }
 
-            payments[f[1]] = new Payment { Description = f[2].Trim(), Amount = Amount(f[3]), Date = date };
+            payments[f[1]] = new Payment { Description = DecodeDescription(f[2]), Amount = Amount(f[3]), Date = date };
             break;
 
         case "UpdatePaymentAmount" when f.Length == 3 && payments.TryGetValue(f[1], out var pa):
@@ -112,7 +114,7 @@ foreach (var raw in File.ReadLines(inputPath))
             break;
 
         case "UpdatePaymentDescription" when f.Length == 3 && payments.TryGetValue(f[1], out var pn):
-            pn.Description = f[2].Trim();
+            pn.Description = DecodeDescription(f[2]);
             break;
 
         case "RemovePayment" when f.Length == 2:
@@ -420,6 +422,12 @@ decimal Amount(string s) => decimal.Parse(s.Trim(), NumberStyles.Number, inv);
 
 static bool TryDate(string s, out DateOnly date) =>
     DateOnly.TryParseExact(s.Trim(), "yyyyMMdd", CultureInfo.InvariantCulture, DateTimeStyles.None, out date);
+
+// A description as the legacy app wrote it: percent-encoded, because a raw comma would split the line. Decoding
+// happens here, on the way in, so everything downstream — grouping, sequence descriptions, the emitted events —
+// sees the text the user actually typed. UnescapeDataString leaves a '%' that is not a valid escape alone, so a
+// description such as "50% off" survives as typed rather than throwing or being mangled.
+static string DecodeDescription(string field) => Uri.UnescapeDataString(field).Trim();
 
 static bool TryMonth(string s, out MonthOnly month)
 {
