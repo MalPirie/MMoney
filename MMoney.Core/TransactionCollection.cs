@@ -253,11 +253,18 @@ internal sealed class TransactionCollection(bool ignoreMonthClosed)
 
     /// <summary>
     /// Applies a month close: unless closed months are being shown, collapses the month into a carried-balance
-    /// anchor at the start of the next month; then prunes completed sequences and advances the edit lock.
+    /// anchor at the start of the next month and prunes completed sequences; either way, advances the edit lock.
     /// </summary>
     /// <remarks>
     /// The carried balance is computed before the lock advances, so it captures the balance as of the closing
     /// month. This ordering is the reason a close must be a single operation.
+    /// <para>
+    /// Pruning is part of the collapse, not of the lock: a completed sequence may only be forgotten once its
+    /// occurrences have been absorbed into a carried balance that accounts for them. While closed months are
+    /// being shown there is no such balance, so dropping the rule would take every occurrence that carries no
+    /// override with it and leave the rest resolving as one-offs. The lock still advances in both modes, which
+    /// is what keeps the months being browsed read-only.
+    /// </para>
     /// </remarks>
     public void MonthClosed(MonthOnly month)
     {
@@ -266,9 +273,9 @@ internal sealed class TransactionCollection(bool ignoreMonthClosed)
             var carried = BalanceOn(month.LastDay);
             partitions.Remove(month);
             PutStored(new Transaction(new TransactionId(month.Add(1).FirstDay, 0), carried, CarriedBalanceDescription));
+            RemoveExpiredSequences(month.LastDay);
         }
 
-        RemoveExpiredSequences(month.LastDay);
         EarliestAllowedDate = month.Add(1).FirstDay;
     }
 

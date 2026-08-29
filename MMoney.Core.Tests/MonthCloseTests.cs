@@ -136,6 +136,77 @@ public class MonthCloseTests
     }
 
     [Fact]
+    public void IgnoreMonthClosed_KeepsSequencesThatCompletedInsideAClosedMonth()
+    {
+        var (account, events) = Recording();
+        account.AddTransaction(D(2026, 1, 15), -10m, "ending", MonthlyOnDay(), new RepeatEndCondition.UntilDate(D(2026, 3, 15)));
+        account.AddTransaction(D(2026, 4, 10), 500m, "anchor-helper");
+
+        // One occurrence carries an override; the other two stay at the sequence's base amount.
+        var february = account.GetMonth(M(2026, 2))[0].Transaction;
+        account.ChangeTransactionAmount(february, -25m);
+
+        account.CloseMonth(M(2026, 1), D(2026, 5, 15));
+        account.CloseMonth(M(2026, 2), D(2026, 5, 15));
+        account.CloseMonth(M(2026, 3), D(2026, 5, 15));
+
+        var shown = new Account(account.Id, events, ignoreMonthClosed: true);
+
+        // Every occurrence reappears - the overridden one at its own amount, the rest at the base - and all
+        // of them still resolve through the rule rather than degrading into one-offs.
+        foreach (var (month, amount) in new[] { (M(2026, 1), -10m), (M(2026, 2), -25m), (M(2026, 3), -10m) })
+        {
+            var rows = shown.GetMonth(month);
+            Assert.Single(rows);
+            Assert.Equal(amount, rows[0].Amount);
+            Assert.Equal(LedgerEntryKind.Occurrence, rows[0].Kind);
+        }
+
+        Assert.Equal(D(2026, 4, 1), shown.EarliestAllowedDate); // lock still advances while browsing
+    }
+
+    [Fact]
+    public void IgnoreMonthClosed_ShowsExactlyWhatTheLogHoldsBeforeAnyClose()
+    {
+        var (account, events) = Recording();
+        account.AddTransaction(D(2026, 1, 15), -10m, "ending", MonthlyOnDay(), new RepeatEndCondition.UntilDate(D(2026, 3, 15)));
+        account.AddTransaction(D(2026, 1, 20), -20m, "ongoing", MonthlyOnDay(), Forever());
+        account.AddTransaction(D(2026, 2, 5), -7m, "one-off");
+        account.AddTransaction(D(2026, 4, 10), 500m, "anchor-helper");
+
+        var beforeClosing = Rows(new Account(account.Id, events));
+
+        account.CloseMonth(M(2026, 1), D(2026, 5, 15));
+        account.CloseMonth(M(2026, 2), D(2026, 5, 15));
+        account.CloseMonth(M(2026, 3), D(2026, 5, 15));
+
+        // Browsing closed months must reproduce the pre-close ledger exactly: the collapse is presentational.
+        Assert.Equal(beforeClosing, Rows(new Account(account.Id, events, ignoreMonthClosed: true)));
+    }
+
+    [Fact]
+    public void CompletedSequence_IsStillPrunedWhenTheCloseIsApplied()
+    {
+        var (account, events) = Recording();
+        account.AddTransaction(D(2026, 1, 15), 10m, "ending", MonthlyOnDay(), new RepeatEndCondition.UntilDate(D(2026, 3, 31)));
+        account.AddTransaction(D(2026, 4, 10), 5m, "anchor-helper");
+
+        account.CloseMonth(M(2026, 1), D(2026, 5, 15));
+        account.CloseMonth(M(2026, 2), D(2026, 5, 15));
+        account.CloseMonth(M(2026, 3), D(2026, 5, 15));
+
+        Assert.Empty(account.GetSequences());
+        Assert.Empty(new Account(account.Id, events).GetSequences()); // and on replay
+    }
+
+    /// <summary>Every ledger row an account holds, flattened for whole-ledger equality assertions.</summary>
+    private static List<(DateOnly Date, decimal Amount, string Description, LedgerEntryKind Kind)> Rows(Account account) =>
+        account.EarliestContentMonth() is { } first
+            ? [.. first.To(M(2026, 12)).SelectMany(account.GetMonth)
+                .Select(e => (e.Date, e.Amount, e.Description, e.Kind))]
+            : [];
+
+    [Fact]
     public void Replay_ReconstructsTheSameBalances()
     {
         var (account, events) = Recording();
