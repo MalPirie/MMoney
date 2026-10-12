@@ -17,8 +17,8 @@
 		<ApplicationId>com.mobiorum.mmoney</ApplicationId>
 
 		<!-- Versions -->
-		<ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
-		<ApplicationVersion>1</ApplicationVersion>
+		<ApplicationDisplayVersion>1.1</ApplicationDisplayVersion>
+		<ApplicationVersion>2</ApplicationVersion>
 
 		<!-- SourceLink appends the commit SHA to AssemblyInformationalVersion ("<version>+<sha>"), which the
 		     Settings page reads back as the build's commit (§9). -->
