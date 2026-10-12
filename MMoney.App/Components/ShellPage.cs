@@ -245,32 +245,57 @@ partial class ShellPage : Component<ShellState>
 
     // One month's ledger: real LedgerEntry rows, day-grouped and reversed to newest-first (MonthLedger). Content
     // only — TabbedPageView wraps each page in its own vertical scroller (the CarouselView owns the horizontal axis).
+    // Only the current month highlights today (MonthLedger.WithToday) — other months have no "today" to mark.
     private VisualNode MonthPage(MaterialScheme scheme, Account account, MonthOnly month)
     {
+        var today = State.Manager?.Today ?? DateOnly.FromDateTime(DateTime.Today);
+        var isCurrentMonth = month == MonthOnly.FromDate(today);
+
         var entries = account.GetMonth(month);
         if (entries.Count == 0)
         {
-            return Grid(
+            if (!isCurrentMonth)
+            {
+                return Grid(
+                    Label("No transactions this month")
+                        .FontSize(14)
+                        .TextColor(scheme.OnSurfaceVariant)
+                        .HCenter()
+                        .VCenter()
+                ).Padding(24).HeightRequest(200);
+            }
+
+            return VStack(
+                TodayDayBox(scheme, new LedgerDay(today, []), today),
                 Label("No transactions this month")
                     .FontSize(14)
                     .TextColor(scheme.OnSurfaceVariant)
                     .HCenter()
-                    .VCenter()
-            ).Padding(24).HeightRequest(200);
+            ).Spacing(8).Padding(16, 16, 16, 88);
         }
-
-        var today = State.Manager?.Today ?? DateOnly.FromDateTime(DateTime.Today);
 
         // The carried-balance anchor is not a dated transaction — pull it out of the day grouping and render it as its
         // own darker, header-less box at the foot of the month (it is always the earliest entry).
         var carried = entries.FirstOrDefault(e => e.Kind == LedgerEntryKind.CarriedBalance);
         var dated = entries.Where(e => e.Kind != LedgerEntryKind.CarriedBalance).ToList();
+        var days = MonthLedger.ByDayDescending(dated);
+        if (isCurrentMonth)
+        {
+            days = MonthLedger.WithToday(days, today);
+        }
 
         var rows = new List<VisualNode>();
-        foreach (var day in MonthLedger.ByDayDescending(dated))
+        foreach (var day in days)
         {
-            rows.Add(DayHeader(scheme, day.Date));
-            rows.Add(DayBox(scheme, day.Entries, today));
+            if (isCurrentMonth && day.Date == today)
+            {
+                rows.Add(TodayDayBox(scheme, day, today));
+            }
+            else
+            {
+                rows.Add(DayHeader(scheme, day.Date));
+                rows.Add(DayBox(scheme, day.Entries, today));
+            }
         }
         if (carried is not null)
         {
@@ -278,6 +303,37 @@ partial class ShellPage : Component<ShellState>
         }
 
         return VStack([.. rows]).Spacing(8).Padding(16, 16, 16, 88); // extra bottom room so the last rows clear the FAB
+    }
+
+    // Today's day: a Primary-outlined box holding the date line, so it reads as one highlighted unit rather than
+    // an ordinary header above a plain box. The outline carries the highlight on a plain (not surface-coloured)
+    // background; any transactions sit in their own ordinary SurfaceContainer box nested just inside it — the
+    // date itself is never on that surface colour. Rows inside keep normal amount colours and tap-to-edit. With
+    // no transactions today, the outer box holds just the date line and is inert (nothing to tap).
+    private VisualNode TodayDayBox(MaterialScheme scheme, LedgerDay day, DateOnly today)
+    {
+        var dateLabel = Label(DayHeaderText(day.Date))
+            .FontSize(12)
+            .FontAttributes(MauiControls.FontAttributes.Bold)
+            .TextColor(scheme.OnSurfaceVariant)
+            .Padding(16, 12, 16, day.Entries.Count == 0 ? 12 : 4);
+
+        var children = new List<VisualNode> { dateLabel };
+        if (day.Entries.Count > 0)
+        {
+            children.Add(
+                Border(VStack([.. day.Entries.Select(entry => LedgerRow(scheme, entry, today))]).Spacing(0))
+                    .BackgroundColor(scheme.SurfaceContainer)
+                    .StrokeThickness(0)
+                    .StrokeShape(new RoundRectangle().CornerRadius(16))
+                    .Margin(0));
+        }
+
+        return Border(VStack([.. children]).Spacing(0))
+            .BackgroundColor(Colors.Transparent)
+            .Stroke(new MauiControls.SolidColorBrush(scheme.Primary))
+            .StrokeThickness(2)
+            .StrokeShape(new RoundRectangle().CornerRadius(16));
     }
 
     // The carried-balance anchor: its own box, darker than the day boxes and with no date header, since it has no real
@@ -305,8 +361,10 @@ partial class ShellPage : Component<ShellState>
         .StrokeShape(new RoundRectangle().CornerRadius(16))
         .Margin(0, 8, 0, 0); // a little extra separation from the day boxes above
 
+    private static string DayHeaderText(DateOnly date) => date.ToString("ddd d MMMM", Gb);
+
     private static VisualNode DayHeader(MaterialScheme scheme, DateOnly date) =>
-        Label(date.ToString("ddd d MMMM", Gb))
+        Label(DayHeaderText(date))
             .FontSize(12)
             .FontAttributes(MauiControls.FontAttributes.Bold)
             .TextColor(scheme.OnSurfaceVariant)

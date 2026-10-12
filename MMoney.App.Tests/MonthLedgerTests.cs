@@ -64,4 +64,63 @@ public class MonthLedgerTests
     [Fact]
     public void ByDayDescending_EmptyInput_YieldsNoDays() =>
         Assert.Empty(MonthLedger.ByDayDescending(System.Array.Empty<LedgerEntry>()));
+
+    private static readonly DateOnly Today = new(2026, 3, 15);
+
+    [Fact]
+    public void WithToday_TodayAlreadyPresent_ReturnsUnchanged()
+    {
+        var days = MonthLedger.ByDayDescending(new[] { Entry(15, 1, 10m, 10m) });
+
+        var result = MonthLedger.WithToday(days, Today);
+
+        Assert.Same(days, result);
+    }
+
+    [Fact]
+    public void WithToday_InsertsBetweenFutureAndPastDays()
+    {
+        var days = MonthLedger.ByDayDescending(new[]
+        {
+            Entry(20, 1, 10m, 10m), // after today
+            Entry(10, 1, 10m, 20m), // before today
+        });
+
+        var result = MonthLedger.WithToday(days, Today);
+
+        Assert.Equal(
+            new[] { new DateOnly(2026, 3, 20), Today, new DateOnly(2026, 3, 10) },
+            result.Select(d => d.Date).ToArray());
+        Assert.Empty(result[1].Entries);
+    }
+
+    [Fact]
+    public void WithToday_AllDaysInTheFuture_LandsAtTheBottom()
+    {
+        var days = MonthLedger.ByDayDescending(new[] { Entry(20, 1, 10m, 10m) });
+
+        var result = MonthLedger.WithToday(days, Today);
+
+        Assert.Equal(new[] { new DateOnly(2026, 3, 20), Today }, result.Select(d => d.Date).ToArray());
+    }
+
+    [Fact]
+    public void WithToday_AllDaysInThePast_LandsAtTheTop()
+    {
+        var days = MonthLedger.ByDayDescending(new[] { Entry(10, 1, 10m, 10m) });
+
+        var result = MonthLedger.WithToday(days, Today);
+
+        Assert.Equal(new[] { Today, new DateOnly(2026, 3, 10) }, result.Select(d => d.Date).ToArray());
+    }
+
+    [Fact]
+    public void WithToday_NoDays_YieldsOnlyToday()
+    {
+        var result = MonthLedger.WithToday(System.Array.Empty<LedgerDay>(), Today);
+
+        var day = Assert.Single(result);
+        Assert.Equal(Today, day.Date);
+        Assert.Empty(day.Entries);
+    }
 }
