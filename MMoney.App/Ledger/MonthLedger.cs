@@ -26,4 +26,39 @@ public static class MonthLedger
                 day.Key,
                 day.OrderByDescending(entry => entry.Transaction.Sequence).ToList()))
             .ToList();
+
+    /// <summary>
+    /// Ensures <paramref name="daysDescending"/> (as from <see cref="ByDayDescending"/>) has a day for
+    /// <paramref name="today"/>, inserting an empty one at the correct chronological position if nothing fell
+    /// on it. Used for the current month only, so today's day — with or without transactions — always has a
+    /// slot the screen can highlight.
+    /// </summary>
+    public static IReadOnlyList<LedgerDay> WithToday(IReadOnlyList<LedgerDay> daysDescending, DateOnly today)
+    {
+        if (daysDescending.Any(day => day.Date == today))
+        {
+            return daysDescending;
+        }
+
+        var result = new List<LedgerDay>();
+        var inserted = false;
+
+        foreach (var day in daysDescending)
+        {
+            if (!inserted && day.Date < today)
+            {
+                result.Add(new LedgerDay(today, []));
+                inserted = true;
+            }
+
+            result.Add(day);
+        }
+
+        if (!inserted)
+        {
+            result.Add(new LedgerDay(today, []));
+        }
+
+        return result;
+    }
 }
