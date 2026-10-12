@@ -66,8 +66,12 @@ public sealed class MaterialSchemeSet
             OnBackground = Color.FromArgb("#EFE0D5"),
             Surface = Color.FromArgb("#1A120C"),
             OnSurface = Color.FromArgb("#EFE0D5"),
-            SurfaceContainer = Color.FromArgb("#271C15"),
-            SurfaceContainerHighest = Color.FromArgb("#3A2D24"), // a raised, distinct tone for the carried-balance anchor
+            // Lightened further from Background than a literal tonal step would give (~1.1:1 contrast at #271C15) —
+            // the sRGB gamma curve compresses dark tones so hard that the same numeric gap as the light scheme's
+            // Background->SurfaceContainer step is nearly invisible here. These values target a jump a reader can
+            // actually see day boxes by, not just a mathematically-equal step.
+            SurfaceContainer = Color.FromArgb("#3D2C1F"),
+            SurfaceContainerHighest = Color.FromArgb("#54402F"), // a raised, distinct tone for the carried-balance anchor
             SurfaceVariant = Color.FromArgb("#52443A"),
             OnSurfaceVariant = Color.FromArgb("#D7C3B5"),
             Outline = Color.FromArgb("#9F8D7B"),
